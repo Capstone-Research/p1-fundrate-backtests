@@ -64,8 +64,7 @@ async def collectdata_calc():
                 
                 for fds in arrobj_r:
                     ktime = fds['fundingTime']
-                    if(fundstart<1):
-                        fundstart = ktime
+                    if(fundstart<1):fundstart = ktime
                     #start = ktime - 1000*60
                     #end = ktime + 1000*60
                     #kline_url = kline_req_url+'?symbol='+ins+'USDT&interval='+itv+'&startTime='+str(start)+'&endTime='+str(end)+'&limit=1'
@@ -87,11 +86,13 @@ async def collectdata_calc():
                         print(ins + ':' + str(ktime) + ' fundrate:'+str(fundrate)+' compoundfund:'+str(compoundfund))
                 
                 if(len(arrobj_r)<1):
-                     t
+                    if(fundend<1):fundend = t
                     break
                 t = arrobj_r[len(arrobj_r)-1]['fundingTime']+1000 # 拿最後一筆資料的收盘时间當作下一個的開頭
                 print('current time '+ str(t) )
             
+            retdict[ins]['fundstart'] = fundstart
+            retdict[ins]['fundend'] = fundend
             retdict[ins]['compoundfund'] = compoundfund
             retdict[ins]['positiveFundTimes'] = positiveFundTimes
             retdict[ins]['totalFundTimes'] = totalFundTimes
@@ -101,8 +102,35 @@ async def backtest():
     fundhist = await collectdata_calc()
     print(fundhist)
     for ins in instruments:
-        starttime = fundhist[ins][0]
-        print('回測時間總費率')
+        starttime = fundhist[ins]['fundstart'] / 1000
+        endtime = fundhist[ins]['fundend'] / 1000
+        starttime_dt = datetime.fromtimestamp(starttime)
+        endtime_dt = datetime.fromtimestamp(endtime)
+        
+        durationDays = (fundhist[ins]['fundend'] - fundhist[ins]['fundstart']) / 86400000
+        onedayret = (fundhist[ins]['compoundfund'] - initfund)/durationDays/initfund
+        yearret = onedayret * 365 * 100
+        yearret_str = "{:.2f}".format(yearret)
+        
+        positiveRatio = (fundhist[ins]['positiveFundTimes'] / fundhist[ins]['totalFundTimes'])*100
+        positiveRatio_str = "{:.2f}".format(positiveRatio)
+        
+        netReturn = fundhist[ins]['compoundfund'] - initfund
+        netReturn_str = "{:.2f}".format(netReturn)
+        grossRate = (netReturn / initfund)/durationDays*365*100
+        grossRate_str = "{:.2f}".format(grossRate)
+        
+        msg = ins + 'USDT \n'
+        msg += '回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+'\n'
+        msg += '初始資金:'+ str(initfund) +'USD\n'
+        msg += '淨利:'+ netReturn_str +'USD\n'
+        msg += '毛利率:'+ grossRate_str +'%\n'
+        msg += '費率為正次數:'+ str(fundhist[ins]['positiveFundTimes'])+'\n'
+        msg += '總領費率次數:'+ str(fundhist[ins]['totalFundTimes'])+'\n'
+        msg += '費率正比率:'+ positiveRatio_str +'%\n'
+        
+        
+        print(msg)
         
     print('done')
 
