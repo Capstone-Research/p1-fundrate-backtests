@@ -4,10 +4,13 @@ import aiohttp
 import json
 from datetime import datetime
 import time
+import csv
+import codecs
 base_url = "https://api.binance.com/api/v3/"
 base_url_dapi = "https://dapi.binance.com/dapi/v1/"
 kline_req_url = base_url+"klines"
 fundrate_req_url = base_url_dapi+"fundingRate"
+itv='8h'
 
 # 初始本金
 initfund = 100000
@@ -40,7 +43,7 @@ async def request(session,url):
 async def collectdata_calc():    
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
         now = datetime.now()
-        itv='8h'
+        
         startTime = 1483228800000 # 2017/1/1
         endTime = int(time.mktime(now.timetuple())*1e3)
         retdict = {}
@@ -65,24 +68,17 @@ async def collectdata_calc():
                 for fds in arrobj_r:
                     ktime = fds['fundingTime']
                     if(fundstart<1):fundstart = ktime
-                    #start = ktime - 1000*60
-                    #end = ktime + 1000*60
-                    #kline_url = kline_req_url+'?symbol='+ins+'USDT&interval='+itv+'&startTime='+str(start)+'&endTime='+str(end)+'&limit=1'
-                    #ret = await request(session,kline_url)
-                    #arrobj = json.loads(ret)
                     
-                    #if(len(arrobj)<1):continue
-                    #if(len(arrobj[0])<1):continue
                     
                     if(not ktime  in retdict[ins]):
-                        #closeprice = float(arrobj[0][4])
+                        
                         fundrate = float(fds['fundingRate'])
                         if(fundrate>0):
                             positiveFundTimes +=1
                         totalFundTimes += 1
                         compoundfund += compoundfund*fundrate
                         
-                        retdict[ins][ktime] = [fundrate,compoundfund-initfund]
+                        retdict[ins][ktime] = [fundrate,compoundfund-initfund] #,closeprice
                         print(ins + ':' + str(ktime) + ' fundrate:'+str(fundrate)+' compoundfund:'+str(compoundfund))
                 
                 if(len(arrobj_r)<1):
@@ -96,11 +92,16 @@ async def collectdata_calc():
             retdict[ins]['compoundfund'] = compoundfund
             retdict[ins]['positiveFundTimes'] = positiveFundTimes
             retdict[ins]['totalFundTimes'] = totalFundTimes
+            #time.sleep(15)
         return retdict
     
 async def backtest():
     fundhist = await collectdata_calc()
-    print(fundhist)
+    
+    file_object = codecs.open('fundrate_report.txt', 'w', "utf-8")
+    file_object.write('')
+    file_object.close()
+    
     for ins in instruments:
         starttime = fundhist[ins]['fundstart'] / 1000
         endtime = fundhist[ins]['fundend'] / 1000
@@ -120,17 +121,43 @@ async def backtest():
         grossRate = (netReturn / initfund)/durationDays*365*100
         grossRate_str = "{:.2f}".format(grossRate)
         
-        msg = ins + 'USDT \n'
-        msg += '回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+'\n'
-        msg += '初始資金:'+ str(initfund) +'USD\n'
-        msg += '淨利:'+ netReturn_str +'USD\n'
-        msg += '毛利率:'+ grossRate_str +'%\n'
-        msg += '費率為正次數:'+ str(fundhist[ins]['positiveFundTimes'])+'\n'
-        msg += '總領費率次數:'+ str(fundhist[ins]['totalFundTimes'])+'\n'
-        msg += '費率正比率:'+ positiveRatio_str +'%\n'
+        msg = u''
+        msg += ins + 'USDT \n'
+        msg += u'回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
+        msg += u'初始資金:'+ str(initfund) +'USD\n'
+        msg += u'費率為正次數:'+ str(fundhist[ins]['positiveFundTimes'])+'\n'
+        msg += u'總領費率次數:'+ str(fundhist[ins]['totalFundTimes'])+'\n'
+        msg += u'費率正比率:'+ positiveRatio_str +'%\n'
+        msg += u'淨利:'+ netReturn_str +'USD\n'
+        msg += u'毛利率:'+ grossRate_str +'%\n\n'
+        
+        file_object = codecs.open('fundrate_report.txt', 'a', "utf-8")
+        file_object.write(msg)
+        file_object.close()        
+        
+        # write csv
+        with open( (ins+'.csv'), mode='w') as frate_file:
+            frate_file = csv.writer(frate_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            frate_file.writerow(['time', 'fundrate', 'netprofit'])
+            for key in fundhist[ins]:
+                if(type(key) != type(1)):continue
+                frate_file.writerow([ key , fundhist[ins][key][0], fundhist[ins][key][1] ]) #fundhist[ins][key][2]]
         
         
-        print(msg)
+        
+        # write underlying price 
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+            kline_url = kline_req_url+'?symbol='+ins+'USDT&interval='+itv+'&startTime='+str( fundhist[ins]['fundstart'] )+'&endTime='+str(fundhist[ins]['fundend'])+'&limit=1000'
+            ret = await request(session,kline_url)
+            arrobj = json.loads(ret)
+            if(len(arrobj)<1):return
+            with open( (ins+'_price.csv'), mode='w') as fprice_file:
+                fprice_file = csv.writer(fprice_file , delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+                fprice_file.writerow(['time', 'price'])
+                for kline in arrobj:
+                    closeprice = float(kline[4])
+                    time = kline[0]
+                    fprice_file.writerow([time,closeprice])
         
     print('done')
 
