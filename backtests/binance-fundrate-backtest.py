@@ -141,9 +141,8 @@ async def backtest():
             frate_file.writerow(['time', 'fundrate', 'netprofit'])
             for key in fundhist[ins]:
                 if(type(key) != type(1)):continue
-                frate_file.writerow([ key , fundhist[ins][key][0], fundhist[ins][key][1] ]) #fundhist[ins][key][2]]
-        
-        
+                rate_ampl = fundhist[ins][key][0] * 3 * 365 * 100
+                frate_file.writerow([ key , rate_ampl , fundhist[ins][key][1] ]) #fundhist[ins][key][2]]
         
         # write underlying price 
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
