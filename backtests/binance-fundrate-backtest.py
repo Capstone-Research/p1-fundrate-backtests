@@ -136,6 +136,7 @@ async def backtest():
         file_object.close()        
         
         # write csv
+        '''
         with open( (ins+'.csv'), mode='w') as frate_file:
             frate_file = csv.writer(frate_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
             frate_file.writerow(['time', 'fundrate', 'netprofit'])
@@ -143,6 +144,7 @@ async def backtest():
                 if(type(key) != type(1)):continue
                 rate_ampl = fundhist[ins][key][0] * 3 * 365 * 100
                 frate_file.writerow([ key , rate_ampl , fundhist[ins][key][1] ]) #fundhist[ins][key][2]]
+        '''
         
         # write underlying price 
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
@@ -150,14 +152,39 @@ async def backtest():
             ret = await request(session,kline_url)
             arrobj = json.loads(ret)
             if(len(arrobj)<1):return
+            
+        
+            # combine data
+            timestampcol = []
+            timeprice = {}
+            for key in fundhist[ins]:
+                if(type(key) != type(1)):continue
+                timestampcol.append(key)
+            for kline in arrobj:
+                time = kline[0]
+                if(not time in timeprice):
+                    timeprice[time] = kline[4]
+                timestampcol.append(time)
+            
+            # 
+            timestampcol.sort()
+            
+            
             with open( (ins+'_price.csv'), mode='w') as fprice_file:
                 fprice_file = csv.writer(fprice_file , delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-                fprice_file.writerow(['time', 'price'])
-                for kline in arrobj:
-                    closeprice = float(kline[4])
-                    time = kline[0]
-                    fprice_file.writerow([time,closeprice])
-        
+                fprice_file.writerow(['time','fundrate','netprofit','price'])
+
+                prvrate = 0
+                prvnetprofit = 0
+                prvprice = 0
+                for tt in timestampcol:
+                    if(tt in fundhist[ins]):
+                        prvrate = fundhist[ins][tt][0] * 3 * 365 * 100
+                        prvnetprofit = fundhist[ins][tt][1]
+                    elif(tt in timeprice):
+                        prvprice = timeprice[tt]
+                    _dt = datetime.fromtimestamp(tt/1000)
+                    fprice_file.writerow([_dt,prvrate,prvnetprofit,prvprice])
     print('done')
 
 if __name__ == "__main__":
