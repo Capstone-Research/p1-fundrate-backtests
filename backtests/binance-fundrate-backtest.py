@@ -275,7 +275,7 @@ async def backtest():
     coinlist = ['ETH','EGLD','DOGE','DOT','LTC']
     coinweight = {'ETH':0.18,'EGLD':0.35,'DOGE':0.24,'DOT':0.1,'LTC':0.13}
     
-    alltimeframe = []
+    
     yearret = 0
     positiveRatio = 0
     mdd = 9999
@@ -334,7 +334,38 @@ async def backtest():
     file_object = codecs.open('fundrate_backtest_combine.txt', 'w', "utf-8")
     file_object.write(msg)
     file_object.close()        
-        
+    
+    timestampcol = []
+    for ins in coinlist:
+        for key in fundhist[ins]:
+            if(type(key) != type(1)):continue
+            timestampcol.append(key)
+    
+    timestampcol.sort() 
+    with open( ('combine_return.csv'), mode='w') as fprice_file:
+        fprice_file = csv.writer(fprice_file , delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        fprice_file.writerow(['time','fundrate','netprofit'])
+
+        prvrate = {}
+        prvnetprofit = {}
+        for tt in timestampcol:
+            for ins in coinlist:
+                if(tt in fundhist[ins]):
+                    prvrate[ins] = (fundhist[ins][tt][0] * 3 * 365 * 100) * coinweight[ins]
+                    prvnetprofit[ins] = (fundhist[ins][tt][1]) * coinweight[ins]
+            
+            def _sum(arr):
+                sum=0
+                for i in arr:
+                    sum = sum + i
+                return(sum)               
+            rate = _sum( list(prvrate.values()) )
+            netprofit = _sum( list(prvnetprofit.values()) )
+            _dt = datetime.fromtimestamp(tt/1000)
+            dtformat = _dt.strftime('%Y-%m-%d %H:%M:%S')
+            fprice_file.writerow([dtformat,rate,netprofit])
+
+    
     print('done')
 
 if __name__ == "__main__":
