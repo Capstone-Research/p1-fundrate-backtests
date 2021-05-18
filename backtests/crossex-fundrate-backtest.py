@@ -10,7 +10,7 @@ import math
 base_url = "https://api.binance.com/api/v3/"
 base_url_fapi = "https://fapi.binance.com"
 kline_req_url = base_url+"klines"
-fundrate_req_url = base_url_fapi+"fundingRate"
+fundrate_req_url = base_url_fapi+"/fapi/v1/fundingRate"
 
 base_url_huo = "https://api.hbdm.com"
 fundrate_req_url_huo = "/linear-swap-api/v1/swap_historical_funding_rate"
@@ -50,7 +50,60 @@ async def fetch_instruments_huobi():
             retarr[symb['symbol']] = symb['contract_code']
         return retarr
 
+async def fetch_binance_rate_history(symbols):
+    bSymbRTimeseries = {}
+    for symb in symbols:
+        timeratedict = {}
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+            now = datetime.now()
+            startTime = 1483228800000 # 2017/1/1
+            t = startTime
+            endTime = int(time.mktime(now.timetuple())*1e3)
+            while(t <= endTime):
+                fundrate_url = fundrate_req_url +'?symbol='+ symbols[symb] +'&startTime='+str(t)+'&limit=1000'
+                print(fundrate_url )
+                retr = await request(session,fundrate_url)
+                arrobj_r = json.loads(retr)
+                
+                for fds in arrobj_r:
+                    ktime = fds['fundingTime']
+                    if(not ktime  in timeratedict):
+                        fundrate = float(fds['fundingRate'])
+                        timeratedict[ktime] = fundrate
 
+                if(len(arrobj_r)<1):
+                    break
+                t = arrobj_r[len(arrobj_r)-1]['fundingTime']+1000 # 拿最後一筆資料的收盘时间當作下一個的開頭
+        bSymbRTimeseries[symb] = timeratedict
+    return bSymbRTimeseries
+
+async def fetch_huobi_rate_history(symbols):
+    hSymbRTimeseries = {}
+    for symb in symbols:
+        timeratedict = {}
+        totalpage = 0
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+            fundrate_url = base_url_huo + fundrate_req_url_huo +'?contract_code='+ symbols[symb]
+            retr = await request(session,fundrate_url)
+            arrobj_r = json.loads(retr)
+            totalpage = arrobj_r['data']['total_page']
+            if(totalpage>0):
+                async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session2:
+                    fundrate_url_t = base_url_huo + fundrate_req_url_huo +'?contract_code='+ symbols[symb]+'&page_size='+str(totalpage)
+                    retr2 = await request(session2,fundrate_url_t)
+                    arrobj_r2 = json.loads(retr2)
+                    
+                    for fds in arrobj_r2['data']['data']:
+                        ktime = fds['funding_time']
+                        if(not ktime  in timeratedict):
+                            fundrate = float(fds['realized_rate'])
+                            timeratedict[ktime] = fundrate
+            
+                        if(len(arrobj_r)<1):
+                            break
+            
+        hSymbRTimeseries[symb] = timeratedict
+    return hSymbRTimeseries
 
 async def aggregate():    
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
@@ -185,9 +238,10 @@ async def aggregate():
 async def backtest():
     binance_instruments = await fetch_instruments_binance()
     huobi_instruments = await fetch_instruments_huobi()
+    #binance_symb_rate_timeseries = await fetch_binance_rate_history(binance_instruments)
+    huobi_symb_rate_timeseries = await fetch_huobi_rate_history(huobi_instruments)
     
-    
-    fundhist = await collectdata_calc()
+    fundhist = await aggregate()
     
     file_object = codecs.open('fundrate_report.txt', 'w', "utf-8")
     file_object.write('')
