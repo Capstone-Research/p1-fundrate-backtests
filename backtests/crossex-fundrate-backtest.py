@@ -193,8 +193,8 @@ def aggregate(alltime,bin_series,huo_series,ok_series,starttimef):
     
     # mdd
     hh = -9999
-    dd = 9999
-    mdd = 9999
+    dd = 0
+    mdd = 0
     
     # 日內最大回撤
     prvdaynetprofit = -9999
@@ -300,7 +300,7 @@ def aggregate(alltime,bin_series,huo_series,ok_series,starttimef):
     sharpe = avgfundrate / stdev(fundratecoll)
     
     
-    retdict['fundstart'] = alltime[0]
+    retdict['fundstart'] = starttimef
     retdict['fundend'] = alltime[-1]
     
     retdict['positiveFundTimes'] = positiveFundTimes
@@ -328,199 +328,66 @@ async def backtest():
     huobi_symb_rate_timeseries,starttimef = await fetch_huobi_rate_history(huobi_instruments,alltime,starttimef)
     okex_symb_rate_timeseries,starttimef = await fetch_okex_rate_history(okex_instruments,alltime,starttimef)
     alltime.sort()
-    fundhist = await aggregate(alltime,binance_symb_rate_timeseries,huobi_symb_rate_timeseries,okex_symb_rate_timeseries,starttimef)
+    fundhist = aggregate(alltime,binance_symb_rate_timeseries,huobi_symb_rate_timeseries,okex_symb_rate_timeseries,starttimef)
     
     file_object = codecs.open('fundrate_report.txt', 'w', "utf-8")
     file_object.write('')
     file_object.close()
     
-    for ins in instruments:
-        starttime = fundhist[ins]['fundstart'] / 1000
-        endtime = fundhist[ins]['fundend'] / 1000
-        starttime_dt = datetime.fromtimestamp(starttime)
-        endtime_dt = datetime.fromtimestamp(endtime)
-        
-        durationDays = (fundhist[ins]['fundend'] - fundhist[ins]['fundstart']) / 86400000
-        onedayret = (fundhist[ins]['compoundfund'] - initfund)/durationDays/initfund
-        yearret = onedayret * 365 * 100
-        yearret_str = "{:.2f}".format(yearret)
-        
-        positiveRatio = (fundhist[ins]['positiveFundTimes'] / fundhist[ins]['totalFundTimes'])*100
-        positiveRatio_str = "{:.2f}".format(positiveRatio)
-        
-        netReturn = fundhist[ins]['compoundfund'] - initfund
-        netReturn_str = "{:.2f}".format(netReturn)
-        grossRate = (netReturn / initfund)/durationDays*365*100
-        grossRate_str = "{:.2f}".format(grossRate)
-        
-        msg = u''
-        msg += ins + 'USDT \n'
-        msg += u'回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
-        msg += u'初始資金:'+ str(initfund) +'USD\n'
-        msg += u'費率為正次數:'+ str(fundhist[ins]['positiveFundTimes'])+'\n'
-        msg += u'總領費率次數:'+ str(fundhist[ins]['totalFundTimes'])+'\n'
-        msg += u'勝率:'+ positiveRatio_str +'%\n'
-        msg += u'總利潤:'+ netReturn_str +'USD\n'
-        msg += u'最大創高區間:'+ ("{:.2f}".format(fundhist[ins]['longestHHPeriod'])) +'天\n'
-        msg += u'最大拉回:'+ ("{:.2f}".format(fundhist[ins]['mdd'])) +'%\n'
-        msg += u'每日最大拉回:'+ ("{:.2f}".format(fundhist[ins]['dmdd'])) +'%\n'
-        msg += u'夏普比率:'+ ("{:.2f}".format(fundhist[ins]['sharpe'])) +'\n'
-        msg += u'波動率:'+ ("{:.2f}".format(fundhist[ins]['avgvolatility'])) +'%\n'
-        msg += u'每月報酬:'+ ("{:.2f}".format(grossRate/12.0)) +'%\n'
-        msg += u'年化報酬:'+ grossRate_str +'%\n\n'
-        
-        
-        file_object = codecs.open('fundrate_report.txt', 'a', "utf-8")
-        file_object.write(msg)
-        file_object.close()        
-        
-        
-        
-        # 圖表資料
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-            kline_url = kline_req_url+'?symbol='+ins+'USDT&interval='+itv+'&startTime='+str( fundhist[ins]['fundstart'] )+'&endTime='+str(fundhist[ins]['fundend'])+'&limit=1000'
-            ret = await request(session,kline_url)
-            arrobj = json.loads(ret)
-            if(len(arrobj)<1):return
-            
-        
-            # combine data
-            timestampcol = []
-            timeprice = {}
-            for key in fundhist[ins]:
-                if(type(key) != type(1)):continue
-                timestampcol.append(key)
-            for kline in arrobj:
-                time = kline[0]
-                if(not time in timeprice):
-                    timeprice[time] = kline[4]
-                timestampcol.append(time)
-            
-            # 
-            timestampcol.sort()
-            
-            
-            with open( (ins+'_price.csv'), mode='w') as fprice_file:
-                fprice_file = csv.writer(fprice_file , delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-                fprice_file.writerow(['time','fundrate','netprofit','price'])
-
-                prvrate = 0
-                prvnetprofit = 0
-                prvprice = 0
-                for tt in timestampcol:
-                    if(tt in fundhist[ins]):
-                        prvrate = fundhist[ins][tt][0] * 3 * 365 * 100
-                        prvnetprofit = fundhist[ins][tt][1]
-                    elif(tt in timeprice):
-                        prvprice = timeprice[tt]
-                    _dt = datetime.fromtimestamp(tt/1000)
-                    fprice_file.writerow([_dt,prvrate,prvnetprofit,prvprice])
-        
-        
+    starttime = fundhist['fundstart']
+    endtime = fundhist['fundend']
+    starttime_dt = datetime.fromtimestamp(starttime)
+    endtime_dt = datetime.fromtimestamp(endtime)
     
+    durationDays = (fundhist['fundend'] - fundhist['fundstart']) / 86400
+    onedayret = (fundhist['compoundfund'] - initfund)/durationDays/initfund
+    yearret = onedayret * 365 * 100
+    yearret_str = "{:.2f}".format(yearret)
     
+    positiveRatio = (fundhist['positiveFundTimes'] / fundhist['totalFundTimes'])*100
+    positiveRatio_str = "{:.2f}".format(positiveRatio)
     
-    
-    
-    
-    
-    
-    # 綜合績效
-    # 目前人工挑選，長遠來看具備上漲基本面及
-    # 及歷史回測績效較好的幣種
-    coinlist = ['ETH','EGLD','DOGE','DOT','LTC']
-    coinweight = {'ETH':0.18,'EGLD':0.35,'DOGE':0.24,'DOT':0.1,'LTC':0.13}
-    
-    
-    yearret = 0
-    positiveRatio = 0
-    mdd = 9999
-    dmdd = 9999
-    sharpe = 0
-    avgvolatility = 0
-    netReturn = 0
-    grossRate = 0
-    durationDays = 0
-    starttime_dt = None
-    endtime_dt = None
-    timestart = 29207694050000
-    timeend = -9999
-    positiveFundTimes = 0
-    totalFundTimes = 0
-    for ins in coinlist:
-        ndays = (fundhist[ins]['fundend'] - fundhist[ins]['fundstart']) / 86400000
-        starttime = fundhist[ins]['fundstart']/1000
-        endtime = fundhist[ins]['fundend']/1000
-        if(ndays>durationDays):durationDays=ndays
-        if(starttime < timestart):
-            starttime_dt = datetime.fromtimestamp(starttime)
-            timestart = starttime
-        if( endtime > timeend):
-            endtime_dt = datetime.fromtimestamp(endtime)
-            timeend = endtime
-        
-        onedayret = (fundhist[ins]['compoundfund'] - initfund)/ndays/initfund
-        yearret += onedayret * 365 * 100 * coinweight[ins]
-        positiveFundTimes += fundhist[ins]['positiveFundTimes']
-        totalFundTimes += fundhist[ins]['totalFundTimes']        
-        positiveRatio += (fundhist[ins]['positiveFundTimes'] / fundhist[ins]['totalFundTimes']) * 100 * coinweight[ins]
-        netReturn += (fundhist[ins]['compoundfund'] - initfund) * coinweight[ins]
-        grossRate += ((netReturn / initfund)/ndays*365*100) * coinweight[ins]
-        sharpe += fundhist[ins]['sharpe'] * coinweight[ins]
-        avgvolatility += fundhist[ins]['avgvolatility'] * coinweight[ins]
-        if(fundhist[ins]['mdd']<mdd ):mdd=fundhist[ins]['mdd']
-        if(fundhist[ins]['dmdd']<dmdd ):dmdd=fundhist[ins]['dmdd']
+    netReturn = fundhist['compoundfund'] - initfund
+    netReturn_str = "{:.2f}".format(netReturn)
+    grossRate = (netReturn / initfund)/durationDays*365*100
+    grossRate_str = "{:.2f}".format(grossRate)
     
     
     msg = u''
-    msg += "'ETH','EGLD','DOGE','DOT','LTC' 綜合費率套利績效\n"
+    msg += 'cross exchange (binance,huobi,okex) fundingrate arbitrage backtest \n'
     msg += u'回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
     msg += u'初始資金:'+ str(initfund) +'USD\n'
-    msg += u'費率為正次數:'+ str(positiveFundTimes)+'\n'
-    msg += u'總領費率次數:'+ str(totalFundTimes)+'\n'
-    msg += u'勝率:'+  ("{:.2f}".format(positiveRatio)) +'%\n'
-    msg += u'總利潤:'+ ("{:.2f}".format(netReturn)) +'USD\n'
-    msg += u'最大拉回:'+ ("{:.2f}".format(mdd)) +'%\n'
-    msg += u'每日最大拉回:'+ ("{:.2f}".format(dmdd)) +'%\n'
-    msg += u'夏普比率:'+ ("{:.2f}".format(sharpe)) +'\n'
-    msg += u'波動率:'+ ("{:.2f}".format(avgvolatility)) +'%\n'
+    msg += u'費率為正次數:'+ str(fundhist['positiveFundTimes'])+'\n'
+    msg += u'總領費率次數:'+ str(fundhist['totalFundTimes'])+'\n'
+    msg += u'勝率:'+ positiveRatio_str +'%\n'
+    msg += u'總利潤:'+ netReturn_str +'USD\n'
+    msg += u'最大創高區間:'+ ("{:.2f}".format(fundhist['longestHHPeriod'])) +'天\n'
+    msg += u'最大拉回:'+ ("{:.2f}".format(fundhist['mdd'])) +'%\n'
+    msg += u'每日最大拉回:'+ ("{:.2f}".format(fundhist['dmdd'])) +'%\n'
+    msg += u'夏普比率:'+ ("{:.2f}".format(fundhist['sharpe'])) +'\n'
+    msg += u'波動率:'+ ("{:.2f}".format(fundhist['avgvolatility'])) +'%\n'
     msg += u'每月報酬:'+ ("{:.2f}".format(grossRate/12.0)) +'%\n'
-    msg += u'年化報酬:'+ ("{:.2f}".format(grossRate)) +'%\n\n'
+    msg += u'年化報酬:'+ grossRate_str +'%\n\n'
     
-    file_object = codecs.open('fundrate_backtest_combine.txt', 'w', "utf-8")
+    
+    file_object = codecs.open('fundrate_report.txt', 'a', "utf-8")
     file_object.write(msg)
     file_object.close()        
     
-    timestampcol = []
-    for ins in coinlist:
-        for key in fundhist[ins]:
-            if(type(key) != type(1)):continue
-            timestampcol.append(key)
     
-    timestampcol.sort() 
-    with open( ('combine_return.csv'), mode='w') as fprice_file:
-        fprice_file = csv.writer(fprice_file , lineterminator='\n', delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+    def intTryParse(value):
+        val = None
+        try:val = int(value)
+        except:pass
+        if(val!=None):return True
+        return False
+        
+    with open( ('aggregate_price.csv'), mode='w') as fprice_file:
+        fprice_file = csv.writer(fprice_file , delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
         fprice_file.writerow(['time','fundrate','netprofit'])
-
-        prvrate = {}
-        prvnetprofit = {}
-        for tt in timestampcol:
-            for ins in coinlist:
-                if(tt in fundhist[ins]):
-                    prvrate[ins] = (fundhist[ins][tt][0] * 3 * 365 * 100) * coinweight[ins]
-                    prvnetprofit[ins] = (fundhist[ins][tt][1]) * coinweight[ins]
-            
-            def _sum(arr):
-                sum=0
-                for i in arr:
-                    sum = sum + i
-                return(sum)               
-            rate = _sum( list(prvrate.values()) )
-            netprofit = _sum( list(prvnetprofit.values()) )
-            _dt = datetime.fromtimestamp(tt/1000)
-            dtformat = _dt.strftime('%Y-%m-%d %H:%M:%S')
-            fprice_file.writerow([dtformat,rate,netprofit])
-
+        for tt in fundhist:
+            if(intTryParse(tt)):
+                fprice_file.writerow([tt,fundhist[tt][0] ,fundhist[tt][1]])
     
     print('done')
 
