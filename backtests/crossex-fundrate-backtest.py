@@ -3,6 +3,7 @@ import asyncio
 import aiohttp
 import json
 from datetime import datetime
+import dateutil.parser
 import time
 import csv
 import codecs
@@ -14,6 +15,10 @@ fundrate_req_url = base_url_fapi+"/fapi/v1/fundingRate"
 
 base_url_huo = "https://api.hbdm.com"
 fundrate_req_url_huo = "/linear-swap-api/v1/swap_historical_funding_rate"
+
+base_url_ok = "https://aws.okex.com"
+fundrate_req_url_ok = "/api/swap/v3/instruments/" #"/historical_funding_rate"
+
 
 
 itv='8h'
@@ -50,7 +55,19 @@ async def fetch_instruments_huobi():
             retarr[symb['symbol']] = symb['contract_code']
         return retarr
 
-async def fetch_binance_rate_history(symbols):
+async def fetch_instruments_okex():
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+        fundrate_url = base_url_ok+'/api/swap/v3/instruments'
+        #print(fundrate_url )
+        retr = await request(session,fundrate_url)
+        retarr = {}
+        arrobj_r = json.loads(retr)
+        for symb in arrobj_r:
+            retarr[symb['underlying_index']] = symb['instrument_id']
+        return retarr
+
+
+async def fetch_binance_rate_history(symbols,alltime):
     bSymbRTimeseries = {}
     for symb in symbols:
         timeratedict = {}
@@ -66,18 +83,19 @@ async def fetch_binance_rate_history(symbols):
                 arrobj_r = json.loads(retr)
                 
                 for fds in arrobj_r:
-                    ktime = fds['fundingTime']
+                    ktime = int(fds['fundingTime']/1000)
                     if(not ktime  in timeratedict):
                         fundrate = float(fds['fundingRate'])
                         timeratedict[ktime] = fundrate
-
+                        if(not ktime in alltime): #
+                            alltime.append(ktime)
                 if(len(arrobj_r)<1):
                     break
                 t = arrobj_r[len(arrobj_r)-1]['fundingTime']+1000 # 拿最後一筆資料的收盘时间當作下一個的開頭
         bSymbRTimeseries[symb] = timeratedict
     return bSymbRTimeseries
 
-async def fetch_huobi_rate_history(symbols):
+async def fetch_huobi_rate_history(symbols,alltime):
     hSymbRTimeseries = {}
     for symb in symbols:
         timeratedict = {}
@@ -90,158 +108,190 @@ async def fetch_huobi_rate_history(symbols):
             if(totalpage>0):
                 async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session2:
                     fundrate_url_t = base_url_huo + fundrate_req_url_huo +'?contract_code='+ symbols[symb]+'&page_size='+str(totalpage)
+                    print(fundrate_url_t)
                     retr2 = await request(session2,fundrate_url_t)
                     arrobj_r2 = json.loads(retr2)
                     
                     for fds in arrobj_r2['data']['data']:
-                        ktime = fds['funding_time']
+                        ktime = int(int(fds['funding_time'])/1000)
                         if(not ktime  in timeratedict):
                             fundrate = float(fds['realized_rate'])
                             timeratedict[ktime] = fundrate
-            
+                            if(not ktime in alltime): #
+                                alltime.append(ktime)
+                                
                         if(len(arrobj_r)<1):
                             break
             
         hSymbRTimeseries[symb] = timeratedict
     return hSymbRTimeseries
 
-async def aggregate():    
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-        now = datetime.now()
-        
-        startTime = 1483228800000 # 2017/1/1
-        endTime = int(time.mktime(now.timetuple())*1e3)
-        retdict = {}
-        
-        for ins in instruments:
-            retdict[ins] = {}
-        for ins in instruments:
-            t = startTime
-            fundstart = 0 # 真實的 fund start time
-            fundend = 0 # 真實的 fund end time
-            compoundfund = initfund # 累計本金          
-            positiveFundTimes = 0 # 勝率 資費為正的次數 
-            totalFundTimes = 0  # 資費總次數
+async def fetch_okex_rate_history(symbols,alltime):
+    hSymbRTimeseries = {}
+    for symb in symbols:
+        timeratedict = {}
+        totalpage = 0
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+            fundrate_url = base_url_ok + fundrate_req_url_ok + symbols[symb] +"/historical_funding_rate"
+            print(fundrate_url)
+            retr = await request(session,fundrate_url)
+            arrobj_r = json.loads(retr)
             
+            for fds in arrobj_r:
+                ktime = int(time.mktime(dateutil.parser.parse(fds['funding_time']).timetuple()))
+                if(not ktime  in timeratedict):
+                    fundrate = float(fds['realized_rate'])
+                    timeratedict[ktime] = fundrate
+                    if(not ktime in alltime): #
+                        alltime.append(ktime)
+
+            if(len(arrobj_r)<1):
+                break
             
-            # mdd
-            hh = -9999
-            dd = 9999
-            mdd = 9999
+        hSymbRTimeseries[symb] = timeratedict
+    return hSymbRTimeseries
+
+
+
+def aggregate(alltime,bin_series,huo_series,ok_series):
+    # collect all timestamp
+    retdict = {}
+    
+    compoundfund = initfund # 累計本金          
+    positiveFundTimes = 0 # 勝率 資費為正的次數 
+    totalFundTimes = 0  # 資費總次數
+    
+    
+    # mdd
+    hh = -9999
+    dd = 9999
+    mdd = 9999
+    
+    # 日內最大回撤
+    prvdaynetprofit = -9999
+    dmdd = 9999
+    
+    # 最長未創高區間
+    lastHHTimestamp = 0
+    longestHHPeriod = -9999
+    
+    
+    # 波動率
+    avgfundrate = 0
+    prvcompfund = 0
+    avgvolatility = 0
+    fundratecoll = []
+    
+    
+    def checkdif(ex1,ex2,ser1,ser2,name1,name2,feedif=-9999):
+        avaliable1 = curtime in ser1[name1]
+        avaliable2 = curtime in ser2[name2]
+        if(avaliable1 and avaliable2):
+            print(ex1,ex2,curtime)
+            fee1 = ser1[name1]
+            fee2 = ser2[name2]
+            negative = fee1 * fee2 < 0
+            if(negative):
+                _feedif = abs(fee1)+abs(fee2)
+                if(_feedif > feedif):
+                    feedif = _feedif
+        return feedif
+    
+    for curtime in alltime:
+        feediff = -9999
+        for coinA in bin_series:
+            for coinB in huo_series:
+                for coinC in ok_series:
+                    if(coinA==coinB):
+                        feediff = checkdif('binance','huobi',bin_series, huo_series,coinA,coinB,feediff)
+                    if(coinB==coinC):
+                        feediff = checkdif('huobi','okex',huo_series, ok_series,coinB,coinC,feediff)
+                    if(coinC==coinA):
+                        feediff = checkdif('okex','huobi', ok_series, bin_series,coinC,coinA,feediff)
             
-            # 日內最大回撤
-            prvdaynetprofit = -9999
-            dmdd = 9999
+        if(not curtime  in retdict):
+            if(feediff>0):
+                totalFundTimes += 1
+                positiveFundTimes +=1            
+                compoundfund += compoundfund*fundrate
             
-            # 最長未創高區間
-            lastHHTimestamp = 0
-            longestHHPeriod = -9999
-            
-            
-            # 波動率
-            avgfundrate = 0
-            prvcompfund = 0
-            avgvolatility = 0
-            fundratecoll = []
-            
-            while(t <= endTime):
-                fundrate_url = fundrate_req_url+'?symbol='+ins+'USD_PERP&startTime='+str(t)+'&limit=1000'
-                #print(fundrate_url )
-                retr = await request(session,fundrate_url)
-                arrobj_r = json.loads(retr)
+                retdict[curtime] = [feediff,compoundfund-initfund]
+                fundratecoll.append(feediff)
+                print(str(curtime) + ' fundrate:'+str(feediff)+' compoundfund:'+str(compoundfund))
+                avgfundrate += feediff
                 
-                for fds in arrobj_r:
-                    ktime = fds['fundingTime']
-                    if(fundstart<1):fundstart = ktime
-                    
-                    if(not ktime  in retdict[ins]):
-                        fundrate = float(fds['fundingRate'])
-                        if(fundrate>0):
-                            positiveFundTimes +=1
-                        totalFundTimes += 1
-                        compoundfund += compoundfund*fundrate
-                        
-                        retdict[ins][ktime] = [fundrate,compoundfund-initfund]
-                        fundratecoll.append(fundrate)
-                        print(ins + ':' + str(ktime) + ' fundrate:'+str(fundrate)+' compoundfund:'+str(compoundfund))
-                        
-                        
-                        
-                        # 計算 d_dd 日內波動
-                        if((totalFundTimes%3)==0):
-                            print('one day has passed , current time = '+ str(t))
-                            todaynetprofit = compoundfund*fundrate
-                            d_dd = todaynetprofit-prvdaynetprofit
-                            if(d_dd < dmdd):dmdd = d_dd # d_dd
-                            prvdaynetprofit = todaynetprofit
-                        
-                        # 計算 mdd 創高區間
-                        if(compoundfund > hh):
-                            hh=compoundfund
-                            if(lastHHTimestamp<1):lastHHTimestamp=ktime
-                            period = (ktime - lastHHTimestamp)
-                            if(period > longestHHPeriod):
-                                longestHHPeriod = period
-                            lastHHTimestamp = ktime
-                        elif(compoundfund < hh):
-                            dd = compoundfund - hh
-                            if(dd < mdd):mdd=dd
-                        
-                        # 波動累加 報酬率累加
-                        if(prvcompfund<1):prvcompfund = compoundfund
-                        avgvolatility += abs(compoundfund - prvcompfund) / prvcompfund
-                        avgfundrate += fundrate
-                        prvcompfund = compoundfund
-                        
-                        
-                if(len(arrobj_r)<1):
-                    if(fundend<1):fundend = t
-                    break
-                t = arrobj_r[len(arrobj_r)-1]['fundingTime']+1000 # 拿最後一筆資料的收盘时间當作下一個的開頭
-                
-                
-            # 計算績效
-            avgfundrate /= totalFundTimes
-            avgvolatility /= totalFundTimes
-            winrate = (positiveFundTimes / totalFundTimes)*100
             
-            # sharp
-            def variance(data, ddof=0):
-                n = len(data)
-                mean = sum(data) / n
-                return sum((x - mean) ** 2 for x in data) / (n - ddof)
-            def stdev(data):
-                var = variance(data)
-                std_dev = math.sqrt(var)
-                return std_dev            
-            sharpe = avgfundrate / stdev(fundratecoll)
+            # 計算 d_dd 日內波動
+            if((totalFundTimes%3)==0):
+                #print('one day has passed , current time = '+ str(curtime))
+                todaynetprofit = compoundfund*feediff
+                d_dd = todaynetprofit-prvdaynetprofit
+                if(d_dd < dmdd):dmdd = d_dd # d_dd
+                prvdaynetprofit = todaynetprofit
             
+            # 計算 mdd 創高區間
+            if(compoundfund > hh):
+                hh=compoundfund
+                if(lastHHTimestamp<1):lastHHTimestamp=curtime
+                period = (curtime - lastHHTimestamp)
+                if(period > longestHHPeriod):
+                    longestHHPeriod = period
+                lastHHTimestamp = curtime
+            elif(compoundfund < hh):
+                dd = compoundfund - hh
+                if(dd < mdd):mdd=dd
             
-            retdict[ins]['fundstart'] = fundstart
-            retdict[ins]['fundend'] = fundend
+            # 波動累加 報酬率累加
+            if(prvcompfund<1):prvcompfund = compoundfund
+            avgvolatility += abs(compoundfund - prvcompfund) / prvcompfund
             
-            retdict[ins]['positiveFundTimes'] = positiveFundTimes
-            retdict[ins]['totalFundTimes'] = totalFundTimes # 盈利次數
+            prvcompfund = compoundfund
             
-            
-            retdict[ins]['compoundfund'] = compoundfund  # 總報酬
-            retdict[ins]['winrate'] = winrate # 勝率
-            retdict[ins]['longestHHPeriod'] = longestHHPeriod/86400000 # 創高區間
-            retdict[ins]['mdd'] = (mdd/initfund)*100 # mdd
-            retdict[ins]['dmdd'] = (dmdd/initfund)*100 # dmdd
-            retdict[ins]['sharpe'] = sharpe # sharpe
-            retdict[ins]['avgvolatility'] = avgvolatility # avgvolatility
-            
-            
-        return retdict
+    # 計算績效
+    avgfundrate /= totalFundTimes
+    avgvolatility /= totalFundTimes
+    winrate = (positiveFundTimes / totalFundTimes)*100
+    
+    # sharp
+    def variance(data, ddof=0):
+        n = len(data)
+        mean = sum(data) / n
+        return sum((x - mean) ** 2 for x in data) / (n - ddof)
+    def stdev(data):
+        var = variance(data)
+        std_dev = math.sqrt(var)
+        return std_dev            
+    sharpe = avgfundrate / stdev(fundratecoll)
+    
+    
+    retdict['fundstart'] = alltime[0]
+    retdict['fundend'] = alltime[-1]
+    
+    retdict['positiveFundTimes'] = positiveFundTimes
+    retdict['totalFundTimes'] = totalFundTimes # 盈利次數
+    
+    
+    retdict['compoundfund'] = compoundfund  # 總報酬
+    retdict['winrate'] = winrate # 勝率
+    retdict['longestHHPeriod'] = longestHHPeriod/86400000 # 創高區間
+    retdict['mdd'] = (mdd/initfund)*100 # mdd
+    retdict['dmdd'] = (dmdd/initfund)*100 # dmdd
+    retdict['sharpe'] = sharpe # sharpe
+    retdict['avgvolatility'] = avgvolatility # avgvolatility
+    
+    
+    return retdict
     
 async def backtest():
+    alltime = []
     binance_instruments = await fetch_instruments_binance()
     huobi_instruments = await fetch_instruments_huobi()
-    #binance_symb_rate_timeseries = await fetch_binance_rate_history(binance_instruments)
-    huobi_symb_rate_timeseries = await fetch_huobi_rate_history(huobi_instruments)
-    
-    fundhist = await aggregate()
+    okex_instruments = await fetch_instruments_okex()
+    binance_symb_rate_timeseries = await fetch_binance_rate_history(binance_instruments,alltime)
+    huobi_symb_rate_timeseries = await fetch_huobi_rate_history(huobi_instruments,alltime)
+    okex_symb_rate_timeseries = await fetch_okex_rate_history(okex_instruments,alltime)
+    alltime.sort()
+    fundhist = await aggregate(alltime,binance_symb_rate_timeseries,huobi_symb_rate_timeseries,okex_symb_rate_timeseries)
     
     file_object = codecs.open('fundrate_report.txt', 'w', "utf-8")
     file_object.write('')
