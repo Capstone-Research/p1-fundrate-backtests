@@ -67,8 +67,9 @@ async def fetch_instruments_okex():
         return retarr
 
 
-async def fetch_binance_rate_history(symbols,alltime):
+async def fetch_binance_rate_history(symbols,alltime,starttimef):
     bSymbRTimeseries = {}
+    seriestimecol = []
     for symb in symbols:
         timeratedict = {}
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
@@ -76,9 +77,10 @@ async def fetch_binance_rate_history(symbols,alltime):
             startTime = 1483228800000 # 2017/1/1
             t = startTime
             endTime = int(time.mktime(now.timetuple())*1e3)
+            
             while(t <= endTime):
                 fundrate_url = fundrate_req_url +'?symbol='+ symbols[symb] +'&startTime='+str(t)+'&limit=1000'
-                print(fundrate_url )
+                #print(fundrate_url )
                 retr = await request(session,fundrate_url)
                 arrobj_r = json.loads(retr)
                 
@@ -89,14 +91,24 @@ async def fetch_binance_rate_history(symbols,alltime):
                         timeratedict[ktime] = fundrate
                         if(not ktime in alltime): #
                             alltime.append(ktime)
+                            print('binance',ktime)
+                    if(not ktime  in timeratedict):
+                        seriestimecol.append(ktime)
+                    
+                    if(not ktime  in seriestimecol):
+                        seriestimecol.append(ktime)                    
                 if(len(arrobj_r)<1):
                     break
                 t = arrobj_r[len(arrobj_r)-1]['fundingTime']+1000 # 拿最後一筆資料的收盘时间當作下一個的開頭
         bSymbRTimeseries[symb] = timeratedict
-    return bSymbRTimeseries
+    seriestimecol.sort()
+    seriesstart = seriestimecol[0]
+    if(seriesstart>starttimef):starttimef = seriesstart
+    return bSymbRTimeseries,starttimef
 
-async def fetch_huobi_rate_history(symbols,alltime):
+async def fetch_huobi_rate_history(symbols,alltime,starttimef):
     hSymbRTimeseries = {}
+    seriestimecol = []
     for symb in symbols:
         timeratedict = {}
         totalpage = 0
@@ -119,15 +131,24 @@ async def fetch_huobi_rate_history(symbols,alltime):
                             timeratedict[ktime] = fundrate
                             if(not ktime in alltime): #
                                 alltime.append(ktime)
-                                
+                            else:                                
+                                print('huobi has funding time',ktime)
+                        
+                        if(not ktime  in seriestimecol):
+                            seriestimecol.append(ktime)
                         if(len(arrobj_r)<1):
                             break
             
         hSymbRTimeseries[symb] = timeratedict
-    return hSymbRTimeseries
+    seriestimecol.sort()
+    seriesstart = seriestimecol[0]
+    if(seriesstart>starttimef):starttimef = seriesstart
+    return hSymbRTimeseries,starttimef
 
-async def fetch_okex_rate_history(symbols,alltime):
+async def fetch_okex_rate_history(symbols,alltime,starttimef):
     hSymbRTimeseries = {}
+    startfime = 0
+    seriestimecol = []   
     for symb in symbols:
         timeratedict = {}
         totalpage = 0
@@ -139,21 +160,29 @@ async def fetch_okex_rate_history(symbols,alltime):
             
             for fds in arrobj_r:
                 ktime = int(time.mktime(dateutil.parser.parse(fds['funding_time']).timetuple()))
+                if(startfime <1):startfime = ktime
                 if(not ktime  in timeratedict):
                     fundrate = float(fds['realized_rate'])
                     timeratedict[ktime] = fundrate
                     if(not ktime in alltime): #
                         alltime.append(ktime)
-
+                    else:
+                        print('okex has funding time',ktime)
+                if(not ktime  in seriestimecol):
+                    seriestimecol.append(ktime)
+                
             if(len(arrobj_r)<1):
                 break
             
         hSymbRTimeseries[symb] = timeratedict
-    return hSymbRTimeseries
+    seriestimecol.sort()
+    seriesstart = seriestimecol[0]
+    if(seriesstart>starttimef):starttimef = seriesstart
+    return hSymbRTimeseries,starttimef
 
 
 
-def aggregate(alltime,bin_series,huo_series,ok_series):
+def aggregate(alltime,bin_series,huo_series,ok_series,starttimef):
     # collect all timestamp
     retdict = {}
     
@@ -182,38 +211,45 @@ def aggregate(alltime,bin_series,huo_series,ok_series):
     avgvolatility = 0
     fundratecoll = []
     
+    timestart = 0
     
     def checkdif(ex1,ex2,ser1,ser2,name1,name2,feedif=-9999):
         avaliable1 = curtime in ser1[name1]
         avaliable2 = curtime in ser2[name2]
         if(avaliable1 and avaliable2):
-            print(ex1,ex2,curtime)
-            fee1 = ser1[name1]
-            fee2 = ser2[name2]
-            negative = fee1 * fee2 < 0
+            
+            fee1 = ser1[name1][curtime]
+            fee2 = ser2[name2][curtime]
+            print(ex1,ex2,curtime,name1,fee1,fee2)
+            negative = (fee1 * fee2) < 0
             if(negative):
                 _feedif = abs(fee1)+abs(fee2)
                 if(_feedif > feedif):
                     feedif = _feedif
         return feedif
-    
-    for curtime in alltime:
+    startIdx = alltime.index(starttimef)
+    for k in range(startIdx,len(alltime)):
+        curtime = alltime[k]
         feediff = -9999
         for coinA in bin_series:
             for coinB in huo_series:
                 for coinC in ok_series:
                     if(coinA==coinB):
+                        #print('now ',curtime,' check binance & huobi', coinA )
                         feediff = checkdif('binance','huobi',bin_series, huo_series,coinA,coinB,feediff)
                     if(coinB==coinC):
+                        #print('now ',curtime,' check huobi & okex', coinC )
                         feediff = checkdif('huobi','okex',huo_series, ok_series,coinB,coinC,feediff)
                     if(coinC==coinA):
-                        feediff = checkdif('okex','huobi', ok_series, bin_series,coinC,coinA,feediff)
+                        #print('now ',curtime,' check huobi & okex', coinA )
+                        feediff = checkdif('okex','binance', ok_series, bin_series,coinC,coinA,feediff)
             
         if(not curtime  in retdict):
             if(feediff>0):
+                if(timestart<1):timestart = curtime
                 totalFundTimes += 1
                 positiveFundTimes +=1            
-                compoundfund += compoundfund*fundrate
+                compoundfund += compoundfund*feediff
             
                 retdict[curtime] = [feediff,compoundfund-initfund]
                 fundratecoll.append(feediff)
@@ -287,11 +323,12 @@ async def backtest():
     binance_instruments = await fetch_instruments_binance()
     huobi_instruments = await fetch_instruments_huobi()
     okex_instruments = await fetch_instruments_okex()
-    binance_symb_rate_timeseries = await fetch_binance_rate_history(binance_instruments,alltime)
-    huobi_symb_rate_timeseries = await fetch_huobi_rate_history(huobi_instruments,alltime)
-    okex_symb_rate_timeseries = await fetch_okex_rate_history(okex_instruments,alltime)
+    starttimef = 0
+    binance_symb_rate_timeseries,starttimef = await fetch_binance_rate_history(binance_instruments,alltime,starttimef)
+    huobi_symb_rate_timeseries,starttimef = await fetch_huobi_rate_history(huobi_instruments,alltime,starttimef)
+    okex_symb_rate_timeseries,starttimef = await fetch_okex_rate_history(okex_instruments,alltime,starttimef)
     alltime.sort()
-    fundhist = await aggregate(alltime,binance_symb_rate_timeseries,huobi_symb_rate_timeseries,okex_symb_rate_timeseries)
+    fundhist = await aggregate(alltime,binance_symb_rate_timeseries,huobi_symb_rate_timeseries,okex_symb_rate_timeseries,starttimef)
     
     file_object = codecs.open('fundrate_report.txt', 'w', "utf-8")
     file_object.write('')
