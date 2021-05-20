@@ -198,7 +198,7 @@ def aggregate(alltime,bin_series,huo_series,ok_series,starttimef):
     
     # 日內最大回撤
     prvdaynetprofit = -9999
-    dmdd = 9999
+    dmdd = 0
     
     # 最長未創高區間
     lastHHTimestamp = 0
@@ -214,6 +214,7 @@ def aggregate(alltime,bin_series,huo_series,ok_series,starttimef):
     timestart = 0
     
     def checkdif(ex1,ex2,ser1,ser2,name1,name2,feedif=-9999):
+        override = False
         avaliable1 = curtime in ser1[name1]
         avaliable2 = curtime in ser2[name2]
         if(avaliable1 and avaliable2):
@@ -226,24 +227,39 @@ def aggregate(alltime,bin_series,huo_series,ok_series,starttimef):
                 _feedif = abs(fee1)+abs(fee2)
                 if(_feedif > feedif):
                     feedif = _feedif
-        return feedif
+                    override = True
+        return feedif,override
     startIdx = alltime.index(starttimef)
     for k in range(startIdx,len(alltime)):
         curtime = alltime[k]
         feediff = -9999
+        ex1=''
+        ex2=''
+        coinN=''
         for coinA in bin_series:
             for coinB in huo_series:
                 for coinC in ok_series:
                     if(coinA==coinB):
                         #print('now ',curtime,' check binance & huobi', coinA )
-                        feediff = checkdif('binance','huobi',bin_series, huo_series,coinA,coinB,feediff)
+                        feediff,override = checkdif('binance','huobi',bin_series, huo_series,coinA,coinB,feediff)
+                        if(override):
+                            ex1='binance'
+                            ex2='houbi'
+                            coinN=coinA
                     if(coinB==coinC):
                         #print('now ',curtime,' check huobi & okex', coinC )
-                        feediff = checkdif('huobi','okex',huo_series, ok_series,coinB,coinC,feediff)
+                        feediff,override = checkdif('huobi','okex',huo_series, ok_series,coinB,coinC,feediff)
+                        if(override):
+                            ex1='houbi'
+                            ex2='okex'
+                            coinN=coinB
                     if(coinC==coinA):
                         #print('now ',curtime,' check huobi & okex', coinA )
-                        feediff = checkdif('okex','binance', ok_series, bin_series,coinC,coinA,feediff)
-            
+                        feediff,override = checkdif('okex','binance', ok_series, bin_series,coinC,coinA,feediff)
+                        if(override):
+                            ex1='okex'
+                            ex2='binance'
+                            coinN=coinA                        
         if(not curtime  in retdict):
             if(feediff>0):
                 if(timestart<1):timestart = curtime
@@ -251,7 +267,7 @@ def aggregate(alltime,bin_series,huo_series,ok_series,starttimef):
                 positiveFundTimes +=1            
                 compoundfund += compoundfund*feediff
             
-                retdict[curtime] = [feediff,compoundfund-initfund]
+                retdict[curtime] = [feediff,compoundfund-initfund,ex1,ex2,coinN]
                 fundratecoll.append(feediff)
                 print(str(curtime) + ' fundrate:'+str(feediff)+' compoundfund:'+str(compoundfund))
                 avgfundrate += feediff
@@ -384,10 +400,10 @@ async def backtest():
         
     with open( ('aggregate_price.csv'), mode='w') as fprice_file:
         fprice_file = csv.writer(fprice_file , delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        fprice_file.writerow(['time','fundrate','netprofit'])
+        fprice_file.writerow(['time','fundrate','netprofit','exchangeA','exchangeB','coinName'])
         for tt in fundhist:
             if(intTryParse(tt)):
-                fprice_file.writerow([tt,fundhist[tt][0] ,fundhist[tt][1]])
+                fprice_file.writerow([tt,fundhist[tt][0] ,fundhist[tt][1],fundhist[tt][2],fundhist[tt][3],fundhist[tt][4]])
     
     print('done')
 
