@@ -3,15 +3,21 @@ import asyncio
 import aiohttp
 import json
 from datetime import datetime
+import gspread
 import dateutil.parser
 import time
-import csv
 import codecs
 import math
 base_url = "https://aws.okex.com"
 kline_req_url = base_url+"klines"
 fundrate_req_url = base_url+"/api/swap/v3/instruments/"
 itv='8h'
+
+# google gspread
+gc = gspread.service_account()
+# owner
+owner_email = 'jun.yeah7429@gmail.com'
+
 
 # 初始本金
 initfund = 100000
@@ -211,7 +217,7 @@ async def backtest():
         
         
         
-        # 圖表資料
+        # 圖表資料 直接上傳到 google spreadsheet
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             kline_url = fundrate_req_url+ instruments[ins] +'/candles?start='+ endtime +'&end='+starttime+'&granularity=14400'
             ret = await request(session,kline_url)
@@ -225,24 +231,32 @@ async def backtest():
             prvrate = 0
             prvnetprofit = 0
             prvprice = 0  
-            with open( (ins+'_price.csv'), mode='w') as fprice_file:
-                fprice_file = csv.writer(fprice_file , delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-                fprice_file.writerow(['time','fundrate','netprofit','price'])
             
-                for key in fundhist[ins]:
-                    if('Z' in key):
-                        closesttimek = {}
-                        tdiff = 9999
-                        for kline in arrobj:
-                            _fundt = datetime.timestamp(dateutil.parser.parse(key))
-                            _kt = datetime.timestamp(dateutil.parser.parse(kline[0]))
-                            _diff = abs(_fundt - _kt)
-                            if(_diff < tdiff):
-                                closesttimek = kline
-                            if(_diff<1):break
-                            
-                        fprice_file.writerow([key, str(fundhist[ins][key][0]) , str(fundhist[ins][key][1]) ,closesttimek[4] ])
-                
+            sh = gc.create('okex-'+ ins)
+            sh.share(owner_email,perm_type='user', role='writer')
+            sheetID = sh.id
+            worksheet = sh.get_worksheet(0)
+            worksheet.update('A1:D1',[['time','fundrate','netprofit','price']])
+            
+            rownum = 2
+            for key in fundhist[ins]:
+                if('Z' in key):
+                    closesttimek = {}
+                    tdiff = 9999
+                    for kline in arrobj:
+                        _fundt = datetime.timestamp(dateutil.parser.parse(key))
+                        _kt = datetime.timestamp(dateutil.parser.parse(kline[0]))
+                        _diff = abs(_fundt - _kt)
+                        if(_diff < tdiff):
+                            closesttimek = kline
+                        if(_diff<1):break
+                    
+                    
+                    worksheet.update('A'+ str(rownum)+':D'+str(rownum),[ [key, str(fundhist[ins][key][0]*3*365) , str(fundhist[ins][key][1]) ,closesttimek[4]] ])
+                    time.sleep(1)
+                    rownum += 1
+                    
+            
             
     # --------------------------------------------------------------------------------------------------------
     # --------------------------------------------------------------------------------------------------------
