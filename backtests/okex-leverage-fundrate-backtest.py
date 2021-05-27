@@ -357,6 +357,7 @@ async def backtest():
     rows = []    
     prvrate = {}
     prvnetprofit = {}
+    prvdt = ''
     for tt in timestampcol:
         for ins in coinlist:
             if(tt in fundhist[ins]):
@@ -375,9 +376,12 @@ async def backtest():
         _fundt = datetime.timestamp(dateutil.parser.parse(tt))
         _rtimespl1 = tt.split('T')
         _rtimespl2 = _rtimespl1[1].split('.')
-        _rtime = _rtimespl1[0] + ' ' + _rtimespl2[0]            
-        rows.append([_rtime, rate , netprofit ])
-        rowend +=1
+        _rtime = _rtimespl1[0] + ' ' + _rtimespl2[0]
+        if(len(prvdt)<1):prvdt=_rtimespl1[0]
+        if(_rtimespl1[0] != prvdt):            
+            rows.append([_rtime, rate , netprofit ])
+            rowend +=1
+        prvdt=_rtimespl1[0]
     
     worksheet.update('A'+ str(rowstart)+':D'+str(rowend),rows)
     notionchart = 'https://notion.vip/notion-chart/draw.html?config_documentId='
