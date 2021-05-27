@@ -197,7 +197,7 @@ async def backtest():
         msg = u''
         msg += '##  **'+ins + '** \n'
         msg += u'回測時間:'+ starttime +' to '+ endtime+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
-        msg += u'初始資金:'+ str(initfund) +'USD\n'
+        msg += u'初始資金:'+ str(initfund) +' USD\n'
         msg += u'費率為正次數:'+ str(fundhist[ins]['positiveFundTimes'])+'\n'
         msg += u'總領費率次數:'+ str(fundhist[ins]['totalFundTimes'])+'\n'
         msg += u'勝率:'+ positiveRatio_str +'%\n'
@@ -267,24 +267,25 @@ async def backtest():
 
         
         msg += '\n\n'
-        msg += ins+'**績效圖**\n\n'
-        msg += '['+notionchart+']('+notionchart+')\n\n'
+        msg += '**'+ins+'**\n\n'
+        msg += '[績效圖]('+notionchart+')\n\n'
         msg += gdrivelink + '\n\n'
         msg += '---\n\n'
         
         # 寫入 md
         file_object = codecs.open('fundrate_report.md', 'a', "utf-8")
         file_object.write(msg)
-        file_object.close()       
+        file_object.close()
+    
     # --------------------------------------------------------------------------------------------------------
     # --------------------------------------------------------------------------------------------------------
     # --------------------------------------------------------------------------------------------------------
-    return
+    
     # 綜合績效
     # 目前人工挑選，長遠來看具備上漲基本面及
     # 及歷史回測績效較好的幣種
-    coinlist = ['ETH','EGLD','DOGE','DOT','LTC']
-    coinweight = {'ETH':0.18,'EGLD':0.35,'DOGE':0.24,'DOT':0.1,'LTC':0.13}
+    coinlist = ['SNX','IOTA','MATIC','RVN','SNX']
+    coinweight = {'SNX':0.18,'IOTA':0.35,'MATIC':0.24,'RVN':0.1,'SNX':0.13}
     
     
     yearret = 0
@@ -295,32 +296,24 @@ async def backtest():
     avgvolatility = 0
     netReturn = 0
     grossRate = 0
-    durationDays = 0
-    starttime_dt = None
-    endtime_dt = None
-    timestart = 29207694050000
-    timeend = -9999
+    
+    starttime = fundhist['IOTA']['fundstart']
+    endtime = fundhist['IOTA']['fundend']    
+    starttime_dt = datetime.timestamp(dateutil.parser.parse(starttime))
+    endtime_dt = datetime.timestamp(dateutil.parser.parse(endtime)) 
+    durationDays = abs(starttime_dt - endtime_dt) / 86400    
+
     positiveFundTimes = 0
     totalFundTimes = 0
     for ins in coinlist:
-        ndays = (fundhist[ins]['fundend'] - fundhist[ins]['fundstart']) / 86400000
-        starttime = fundhist[ins]['fundstart']/1000
-        endtime = fundhist[ins]['fundend']/1000
-        if(ndays>durationDays):durationDays=ndays
-        if(starttime < timestart):
-            starttime_dt = datetime.fromtimestamp(starttime)
-            timestart = starttime
-        if( endtime > timeend):
-            endtime_dt = datetime.fromtimestamp(endtime)
-            timeend = endtime
         
-        onedayret = (fundhist[ins]['compoundfund'] - initfund)/ndays/initfund
+        onedayret = (fundhist[ins]['compoundfund'] - initfund)/durationDays/initfund
         yearret += onedayret * 365 * 100 * coinweight[ins]
         positiveFundTimes += fundhist[ins]['positiveFundTimes']
         totalFundTimes += fundhist[ins]['totalFundTimes']        
         positiveRatio += (fundhist[ins]['positiveFundTimes'] / fundhist[ins]['totalFundTimes']) * 100 * coinweight[ins]
         netReturn += (fundhist[ins]['compoundfund'] - initfund) * coinweight[ins]
-        grossRate += ((netReturn / initfund)/ndays*365*100) * coinweight[ins]
+        grossRate += ((netReturn / initfund)/durationDays*365*100) * coinweight[ins]
         sharpe += fundhist[ins]['sharpe'] * coinweight[ins]
         avgvolatility += fundhist[ins]['avgvolatility'] * coinweight[ins]
         if(fundhist[ins]['mdd']<mdd ):mdd=fundhist[ins]['mdd']
@@ -328,9 +321,9 @@ async def backtest():
     
     
     msg = u''
-    msg += "'ETH','EGLD','DOGE','DOT','LTC' 綜合費率套利績效\n"
+    msg += "**'SNX','IOTA','MATIC','RVN','SNX' 綜合費率套利績效**\n\n"
     msg += u'回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
-    msg += u'初始資金:'+ str(initfund) +'USD\n'
+    msg += u'初始資金:'+ str(initfund) +' USD\n'
     msg += u'費率為正次數:'+ str(positiveFundTimes)+'\n'
     msg += u'總領費率次數:'+ str(totalFundTimes)+'\n'
     msg += u'勝率:'+  ("{:.2f}".format(positiveRatio)) +'%\n'
@@ -342,40 +335,68 @@ async def backtest():
     msg += u'每月報酬:'+ ("{:.2f}".format(grossRate/12.0)) +'%\n'
     msg += u'年化報酬:'+ ("{:.2f}".format(grossRate)) +'%\n\n'
     
-    file_object = codecs.open('fundrate_backtest_combine.txt', 'w', "utf-8")
+    file_object = codecs.open('fundrate_report.md', 'a', "utf-8")
     file_object.write(msg)
-    file_object.close()        
+    file_object.close()
     
     timestampcol = []
     for ins in coinlist:
         for key in fundhist[ins]:
-            if(type(key) != type(1)):continue
-            timestampcol.append(key)
+            if('Z' in key):
+                timestampcol.append(key)
     
-    timestampcol.sort() 
-    with open( ('combine_return.csv'), mode='w') as fprice_file:
-        fprice_file = csv.writer(fprice_file , lineterminator='\n', delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        fprice_file.writerow(['time','fundrate','netprofit'])
-
-        prvrate = {}
-        prvnetprofit = {}
-        for tt in timestampcol:
-            for ins in coinlist:
-                if(tt in fundhist[ins]):
-                    prvrate[ins] = (fundhist[ins][tt][0] * 3 * 365 * 100) * coinweight[ins]
-                    prvnetprofit[ins] = (fundhist[ins][tt][1]) * coinweight[ins]
-            
-            def _sum(arr):
-                sum=0
-                for i in arr:
-                    sum = sum + i
-                return(sum)               
-            rate = _sum( list(prvrate.values()) )
-            netprofit = _sum( list(prvnetprofit.values()) )
-            _dt = datetime.fromtimestamp(tt/1000)
-            dtformat = _dt.strftime('%Y-%m-%d %H:%M:%S')
-            fprice_file.writerow([dtformat,rate,netprofit])
-
+    timestampcol.sort()
+    
+    sh = gc.create('okex-combine-report')
+    sh.share(None, perm_type='anyone', role='reader')
+    sheetID = sh.id
+    worksheet = sh.get_worksheet(0)
+    worksheet.update('A1:C1',[['time','fundrate','netprofit']])
+    rowstart = 2
+    rowend = 2
+    rows = []    
+    prvrate = {}
+    prvnetprofit = {}
+    for tt in timestampcol:
+        for ins in coinlist:
+            if(tt in fundhist[ins]):
+                prvrate[ins] = (fundhist[ins][tt][0] * 3 * 365 * 100) * coinweight[ins]
+                prvnetprofit[ins] = (fundhist[ins][tt][1]) * coinweight[ins]
+        
+        def _sum(arr):
+            sum=0
+            for i in arr:
+                sum = sum + i
+            return(sum)               
+        rate = _sum( list(prvrate.values()) )
+        netprofit = _sum( list(prvnetprofit.values()) )
+        
+        # convert time format
+        _fundt = datetime.timestamp(dateutil.parser.parse(tt))
+        _rtimespl1 = tt.split('T')
+        _rtimespl2 = _rtimespl1[1].split('.')
+        _rtime = _rtimespl1[0] + ' ' + _rtimespl2[0]            
+        rows.append([_rtime, rate , netprofit ])
+        rowend +=1
+    
+    worksheet.update('A'+ str(rowstart)+':D'+str(rowend),rows)
+    notionchart = 'https://notion.vip/notion-chart/draw.html?config_documentId='
+    notionchart += sheetID
+    notionchart += '&config_sheetName=Sheet1'
+    notionchart += '&config_dataRange=A2%3AD'+str(rowend)
+    notionchart += '&config_chartType=line&config_theme=lightMode&option_hAxis_format=MM%2Fdd%2FYY&option_vAxis_format=%23%2C%23%23%23&option_colors=%23D9730D%2C%230B6E99%2C%237D7C78'
+    
+    gdrivelink = '[明細](https://docs.google.com/spreadsheets/d/'+sheetID+'/edit?usp=sharing)'
+    msg += '\n\n'
+    msg += " **'SNX','IOTA','MATIC','RVN','SNX'**\n\n"
+    msg += '[績效圖]('+notionchart+')\n\n'
+    msg += gdrivelink + '\n\n'
+    msg += '---\n\n'
+    
+    # 寫入 md
+    file_object = codecs.open('fundrate_report.md', 'a', "utf-8")
+    file_object.write(msg)
+    file_object.close()
     
     print('done')
 
