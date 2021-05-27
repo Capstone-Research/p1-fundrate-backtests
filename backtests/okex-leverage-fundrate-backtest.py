@@ -83,7 +83,7 @@ async def collectdata_calc(instruments):
             #print(fundrate_url )
             retr = await request(session,fundrate_url)
             arrobj_r = json.loads(retr)
-            
+            arrobj_r = list(reversed(arrobj_r))
             for fds in arrobj_r:
                 ktime = fds['funding_time']
                 if(len(fundstart)<1):fundstart = ktime
@@ -181,7 +181,7 @@ async def backtest():
         starttime_dt = datetime.timestamp(dateutil.parser.parse(starttime))
         endtime_dt = datetime.timestamp(dateutil.parser.parse(endtime))
         
-        durationDays = (starttime_dt - endtime_dt) / 86400
+        durationDays = abs(starttime_dt - endtime_dt) / 86400
         onedayret = (fundhist[ins]['compoundfund'] - initfund)/durationDays/initfund
         yearret = onedayret * 365 * 100
         yearret_str = "{:.2f}".format(yearret)
@@ -196,7 +196,7 @@ async def backtest():
         
         msg = u''
         msg += '##  **'+ins + '** \n'
-        msg += u'回測時間:'+ endtime +' to '+ starttime+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
+        msg += u'回測時間:'+ starttime +' to '+ endtime+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
         msg += u'初始資金:'+ str(initfund) +'USD\n'
         msg += u'費率為正次數:'+ str(fundhist[ins]['positiveFundTimes'])+'\n'
         msg += u'總領費率次數:'+ str(fundhist[ins]['totalFundTimes'])+'\n'
@@ -217,7 +217,7 @@ async def backtest():
         rowend = 2
         rows = []
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-            kline_url = fundrate_req_url+ instruments[ins] +'/candles?start='+ endtime +'&end='+starttime+'&granularity=14400'
+            kline_url = fundrate_req_url+ instruments[ins] +'/candles?start='+ starttime +'&end='+ endtime+'&granularity=14400'
             ret = await request(session,kline_url)
             arrobj = json.loads(ret)
             if(len(arrobj)<1):return
@@ -251,7 +251,8 @@ async def backtest():
                         if(_diff < tdiff):
                             closesttimek = kline
                         if(_diff<1):break
-                    rows.append([_fundt, str(fundhist[ins][key][0]*3*365) , str(fundhist[ins][key][1]) ,closesttimek[4]])
+                    # 注意除了第一欄之外其餘都要是浮點數
+                    rows.append([_rtime, fundhist[ins][key][0]*3*365 , fundhist[ins][key][1] ,float(closesttimek[4])])
                     rowend += 1
                     
             worksheet.update('A'+ str(rowstart)+':D'+str(rowend),rows)
@@ -262,10 +263,15 @@ async def backtest():
         notionchart += '&config_dataRange=A2%3AD'+str(rowend)
         notionchart += '&config_chartType=line&config_theme=lightMode&option_hAxis_format=MM%2Fdd%2FYY&option_vAxis_format=%23%2C%23%23%23&option_colors=%23D9730D%2C%230B6E99%2C%237D7C78'
         
+        gdrivelink = '[明細](https://docs.google.com/spreadsheets/d/'+sheetID+'/edit?usp=sharing)'
+
+        
         msg += '\n\n'
-        msg += '**'+ins+' 績效圖**\n'
-        msg += '['+notionchart+']('+notionchart+')\n'
-        msg += u'-------------------------------------------------------------\n\n'
+        msg += ins+'**績效圖**\n\n'
+        msg += '['+notionchart+']('+notionchart+')\n\n'
+        msg += gdrivelink + '\n\n'
+        msg += '---\n\n'
+        
         # 寫入 md
         file_object = codecs.open('fundrate_report.md', 'a', "utf-8")
         file_object.write(msg)
