@@ -195,8 +195,8 @@ async def backtest():
         grossRate_str = "{:.2f}".format(grossRate)
         
         msg = u''
-        msg += ins + 'USDT \n'
-        msg += u'回測時間:'+ starttime +' to '+ endtime + ' 共 ' +str(int(durationDays)) + ' 天 \n'
+        msg += '##  **'+ins + '** \n'
+        msg += u'回測時間:'+ endtime +' to '+ starttime+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
         msg += u'初始資金:'+ str(initfund) +'USD\n'
         msg += u'費率為正次數:'+ str(fundhist[ins]['positiveFundTimes'])+'\n'
         msg += u'總領費率次數:'+ str(fundhist[ins]['totalFundTimes'])+'\n'
@@ -209,15 +209,13 @@ async def backtest():
         msg += u'波動率:'+ ("{:.2f}".format(fundhist[ins]['avgvolatility'])) +'%\n'
         msg += u'每月報酬:'+ ("{:.2f}".format(grossRate/12.0)) +'%\n'
         msg += u'年化報酬:'+ grossRate_str +'%\n\n'
-        msg += u'-------------------------------------------------------------\n\n'
-        
-        file_object = codecs.open('fundrate_report.txt', 'a', "utf-8")
-        file_object.write(msg)
-        file_object.close()        
-        
         
         
         # 圖表資料 直接上傳到 google spreadsheet
+        sheetID = ''
+        rowstart = 2
+        rowend = 2
+        rows = []
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             kline_url = fundrate_req_url+ instruments[ins] +'/candles?start='+ endtime +'&end='+starttime+'&granularity=14400'
             ret = await request(session,kline_url)
@@ -233,31 +231,45 @@ async def backtest():
             prvprice = 0  
             
             sh = gc.create('okex-'+ ins)
-            sh.share(owner_email,perm_type='user', role='writer')
+            sh.share(None, perm_type='anyone', role='reader')
             sheetID = sh.id
             worksheet = sh.get_worksheet(0)
             worksheet.update('A1:D1',[['time','fundrate','netprofit','price']])
             
-            rownum = 2
+            
             for key in fundhist[ins]:
                 if('Z' in key):
                     closesttimek = {}
                     tdiff = 9999
+                    _fundt = datetime.timestamp(dateutil.parser.parse(key))
+                    _rtimespl1 = key.split('T')
+                    _rtimespl2 = _rtimespl1[1].split('.')
+                    _rtime = _rtimespl1[0] + ' ' + _rtimespl2[0]
                     for kline in arrobj:
-                        _fundt = datetime.timestamp(dateutil.parser.parse(key))
                         _kt = datetime.timestamp(dateutil.parser.parse(kline[0]))
                         _diff = abs(_fundt - _kt)
                         if(_diff < tdiff):
                             closesttimek = kline
                         if(_diff<1):break
+                    rows.append([_fundt, str(fundhist[ins][key][0]*3*365) , str(fundhist[ins][key][1]) ,closesttimek[4]])
+                    rowend += 1
                     
-                    
-                    worksheet.update('A'+ str(rownum)+':D'+str(rownum),[ [key, str(fundhist[ins][key][0]*3*365) , str(fundhist[ins][key][1]) ,closesttimek[4]] ])
-                    time.sleep(1)
-                    rownum += 1
-                    
-            
-            
+            worksheet.update('A'+ str(rowstart)+':D'+str(rowend),rows)
+            time.sleep(1)
+        notionchart = 'https://notion.vip/notion-chart/draw.html?config_documentId='
+        notionchart += sheetID
+        notionchart += '&config_sheetName=Sheet1'
+        notionchart += '&config_dataRange=A2%3AD'+str(rowend)
+        notionchart += '&config_chartType=line&config_theme=lightMode&option_hAxis_format=MM%2Fdd%2FYY&option_vAxis_format=%23%2C%23%23%23&option_colors=%23D9730D%2C%230B6E99%2C%237D7C78'
+        
+        msg += '\n\n'
+        msg += '**'+ins+' 績效圖**\n'
+        msg += '['+notionchart+']('+notionchart+')\n'
+        msg += u'-------------------------------------------------------------\n\n'
+        # 寫入 md
+        file_object = codecs.open('fundrate_report.md', 'a', "utf-8")
+        file_object.write(msg)
+        file_object.close()       
     # --------------------------------------------------------------------------------------------------------
     # --------------------------------------------------------------------------------------------------------
     # --------------------------------------------------------------------------------------------------------
