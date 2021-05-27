@@ -174,7 +174,7 @@ async def backtest():
     
     instruments = await fetch_instruments_okex()
     fundhist = await collectdata_calc(instruments)
-    
+    '''
     for ins in instruments:
         starttime = fundhist[ins]['fundstart']
         endtime = fundhist[ins]['fundend'] 
@@ -276,7 +276,7 @@ async def backtest():
         file_object = codecs.open('fundrate_report.md', 'a', "utf-8")
         file_object.write(msg)
         file_object.close()
-    
+    '''
     # --------------------------------------------------------------------------------------------------------
     # --------------------------------------------------------------------------------------------------------
     # --------------------------------------------------------------------------------------------------------
@@ -284,8 +284,8 @@ async def backtest():
     # 綜合績效
     # 目前人工挑選，長遠來看具備上漲基本面及
     # 及歷史回測績效較好的幣種
-    coinlist = ['SNX','IOTA','MATIC','RVN','SNX']
-    coinweight = {'SNX':0.18,'IOTA':0.35,'MATIC':0.24,'RVN':0.1,'SNX':0.13}
+    coinlist = ['SNX','IOTA','MATIC','RVN','CONV']
+    coinweight = {'SNX':0.18,'IOTA':0.35,'MATIC':0.24,'RVN':0.1,'CONV':0.13}
     
     
     yearret = 0
@@ -321,7 +321,7 @@ async def backtest():
     
     
     msg = u''
-    msg += "**'SNX','IOTA','MATIC','RVN','SNX' 綜合費率套利績效**\n\n"
+    msg += "**'SNX','IOTA','MATIC','RVN','CONV' 綜合費率套利績效**\n\n"
     msg += u'回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+ ' 共 ' +str(int(durationDays)) + ' 天 \n\n'
     msg += u'初始資金:'+ str(initfund) +' USD\n\n'
     msg += u'費率為正次數:'+ str(positiveFundTimes)+'\n\n'
@@ -392,7 +392,7 @@ async def backtest():
     
     gdrivelink = '[明細](https://docs.google.com/spreadsheets/d/'+sheetID+'/edit?usp=sharing)'
     msg += '\n\n'
-    msg += " **'SNX','IOTA','MATIC','RVN','SNX'**\n\n"
+    msg += " **'SNX','IOTA','MATIC','RVN','CONV'**\n\n"
     msg += '[績效圖]('+notionchart+')\n\n'
     msg += gdrivelink + '\n\n'
     msg += '---\n\n'
