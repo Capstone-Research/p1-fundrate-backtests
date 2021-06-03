@@ -245,7 +245,7 @@ async def backtest():
             
             
             with open( (ins+'_price.csv'), mode='w') as fprice_file:
-                fprice_file = csv.writer(fprice_file , delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+                fprice_file = csv.writer(fprice_file , lineterminator='\n',  delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
                 fprice_file.writerow(['time','fundrate','netprofit','price'])
 
                 prvrate = 0
