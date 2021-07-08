@@ -44,12 +44,12 @@ async def recalc_fills():
         if(num == None):break
         curcapital = float(num)
         net = curcapital - initialCapital
-        dayProfitPerc = ( curcapital - prvcap ) / prvcap * 100.0
-        dayProfitPerc_fix2 = float("{:.2f}".format(dayProfitPerc)) 
+        dayProfitPerc = ( curcapital - prvcap ) / prvcap
+        dayProfitPerc_fix2 = float("{:.5f}".format(dayProfitPerc)) 
         
         
-        ret_perc = (net / initialCapital)*100.0
-        ret_perc_fix2 = float("{:.2f}".format(ret_perc))
+        ret_perc = (net / initialCapital)
+        ret_perc_fix2 = float("{:.5f}".format(ret_perc))
         
         
         hhtext = u'創新高'
@@ -66,13 +66,13 @@ async def recalc_fills():
             hhCounter = 0
             
         dd = min(0,net-hh)
-        dd_perc = (dd / prvcap)*100.0
-        dd_perc_fix2 = float("{:.2f}".format(dd_perc))
+        dd_perc = (dd / prvcap)
+        dd_perc_fix2 = float("{:.5f}".format(dd_perc))
     
         if(net<prvnet):
             hhtext = dd_perc_fix2
         
-        net_fix2 = float("{:.2f}".format(net))
+        net_fix2 = float("{:.5f}".format(net))
         newrow = [dayProfitPerc_fix2,ret_perc_fix2,dd_perc_fix2,hhtext,hhrec,hhCounter]
         print(newrow)
         rows.append(newrow)
