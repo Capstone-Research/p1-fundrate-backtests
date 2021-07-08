@@ -8,7 +8,7 @@ import dateutil.parser
 import time
 import codecs
 import math
-
+# 這個 script 是專門給舊版換成新版用的，平常沒有用途
 # gsheet usage
 # https://docs.gspread.org/en/latest/user-guide.html#opening-a-spreadsheet
 
@@ -44,12 +44,12 @@ async def recalc_fills():
         if(num == None):break
         curcapital = float(num)
         net = curcapital - initialCapital
-        dayProfitPerc = (net / prvcap)*100.0
-        dayProfitPerc_fix2 = str( float("{:.2f}".format(dayProfitPerc)) )+'%'
+        dayProfitPerc = ( curcapital - prvcap ) / prvcap * 100.0
+        dayProfitPerc_fix2 = float("{:.2f}".format(dayProfitPerc)) 
         
         
         ret_perc = (net / initialCapital)*100.0
-        ret_perc_fix2 = str( float("{:.2f}".format(ret_perc)) )+'%'
+        ret_perc_fix2 = float("{:.2f}".format(ret_perc))
         
         
         hhtext = u'創新高'
@@ -58,7 +58,7 @@ async def recalc_fills():
             if(net > hh):
                 hh = net
             hhCounter+=1
-            hhrec = dayProfitPerc_fix2
+            hhrec = ret_perc_fix2
             if(hhCounter > longestHHTimes):
                 longestHHTimes = hhCounter
                 
@@ -67,17 +67,20 @@ async def recalc_fills():
             
         dd = min(0,net-hh)
         dd_perc = (dd / prvcap)*100.0
-        dd_perc_fix2 = str( float("{:.2f}".format(dd_perc)) )+'%'
+        dd_perc_fix2 = float("{:.2f}".format(dd_perc))
     
         if(net<prvnet):
             hhtext = dd_perc_fix2
         
-        newrow = [curcapital,net,dayProfitPerc_fix2,ret_perc_fix2,dd_perc_fix2,hhtext,hhrec,hhCounter]
+        net_fix2 = float("{:.2f}".format(net))
+        newrow = [dayProfitPerc_fix2,ret_perc_fix2,dd_perc_fix2,hhtext,hhrec,hhCounter]
         print(newrow)
-        
+        rows.append(newrow)
         prvcap = curcapital
         prvnet = net
-        
+    
+    print('update' + str(row_start+len(rows)))
+    worksheet.update('D'+ str(row_start+1)+':I'+str(row_start+len(rows)),rows)
     print('done')
 
 if __name__ == "__main__":
