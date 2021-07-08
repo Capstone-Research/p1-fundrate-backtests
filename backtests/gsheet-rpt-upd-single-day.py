@@ -63,10 +63,10 @@ async def upd_one_row(curcapital):
         net = curcapital - initialCapital
         net_fix2 = float("{:.2f}".format(net))
         
-        dayProfitPerc = ( curcapital - prvcap ) / prvcap * 100.0
+        dayProfitPerc = ( curcapital - prvcap ) / prvcap
         dayProfitPerc_fix2 = float("{:.2f}".format(dayProfitPerc)) 
         
-        ret_perc = (net / initialCapital)*100.0
+        ret_perc = (net / initialCapital)
         retdaily.append(ret_perc)
         ret_perc_fix2 = float("{:.2f}".format(ret_perc))
         
@@ -88,7 +88,7 @@ async def upd_one_row(curcapital):
             negativeTotal += abs(net)
             
         dd = min(0,net-hh)
-        dd_perc = (dd / prvcap)*100.0
+        dd_perc = (dd / prvcap)
         dd_perc_fix2 = float("{:.2f}".format(dd_perc))
         if(dd<mdd):
             mdd = dd
@@ -121,19 +121,19 @@ async def upd_one_row(curcapital):
     
     totalReturn = float(rows[-1][0])
     _ret = totalReturn / initialCapital
-    _mdd = (mdd/initialCapital) * 100.0
+    _mdd = (mdd/initialCapital)
     datestart = datetime.datetime.strptime(shrows[1][0], "%Y-%m-%d")
     dateend = datetime.datetime.strptime(shrows[-1][0], "%Y-%m-%d")
     numdays =  (dateend - datestart).days
     onedayreturn = _ret / numdays
-    yearreturn = onedayreturn * 365 * 100
-    monthreturn = onedayreturn * 30 * 100
-    winratio = (positivetimes / (len(rows)-1))*100.0
-    prtloseratio = (positiveTotal/positivetimes) / (negativeTotal/negativetimes)
-    riskretratio = _ret / abs(mdd)
+    yearreturn = onedayreturn * 365
+    monthreturn = onedayreturn * 30
+    winratio = float("{:.2f}".format(positivetimes / (len(rows)-1)) )  
+    prtloseratio = float("{:.2f}".format( (positiveTotal/positivetimes) / (negativeTotal/negativetimes) ))
+    riskretratio = float("{:.2f}".format(_ret / abs(mdd)) ) 
     std = np.std(retdaily)
-    sharpe = np.mean(retdaily) / std 
-    
+    sharpe = float("{:.2f}".format( np.mean(retdaily) / std ))
+    std = float("{:.2f}".format( np.std(retdaily) ))
     
     worksheet = sh.get_worksheet(0)
     worksheet.update('B3',_ret)
@@ -153,4 +153,4 @@ async def upd_one_row(curcapital):
     print('done')
 
 if __name__ == "__main__":
-    asyncio.run(upd_one_row(501866.5))
+    asyncio.run(upd_one_row(501910.1))
