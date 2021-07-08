@@ -1,13 +1,11 @@
 # coding=utf-8
 import asyncio
-import aiohttp
-import json
 import datetime
 import gspread
 import dateutil.parser
 import time
-import codecs
 import math
+import numpy as np
 
 # gsheet usage
 # https://docs.gspread.org/en/latest/user-guide.html#opening-a-spreadsheet
@@ -47,6 +45,7 @@ async def upd_one_row(curcapital):
     
     # 更新最後一排
     rows = []
+    retdaily = []
     prvcap = initialCapital
     hh = -99999
     mdd = 99999999
@@ -68,6 +67,7 @@ async def upd_one_row(curcapital):
         dayProfitPerc_fix2 = float("{:.2f}".format(dayProfitPerc)) 
         
         ret_perc = (net / initialCapital)*100.0
+        retdaily.append(ret_perc)
         ret_perc_fix2 = float("{:.2f}".format(ret_perc))
         
         hhtext = u'創新高'
@@ -121,6 +121,7 @@ async def upd_one_row(curcapital):
     
     totalReturn = float(rows[-1][0])
     _ret = totalReturn / initialCapital
+    _mdd = (mdd/initialCapital) * 100.0
     datestart = datetime.datetime.strptime(shrows[1][0], "%Y-%m-%d")
     dateend = datetime.datetime.strptime(shrows[-1][0], "%Y-%m-%d")
     numdays =  (dateend - datestart).days
@@ -130,7 +131,24 @@ async def upd_one_row(curcapital):
     winratio = (positivetimes / (len(rows)-1))*100.0
     prtloseratio = (positiveTotal/positivetimes) / (negativeTotal/negativetimes)
     riskretratio = _ret / abs(mdd)
+    std = np.std(retdaily)
+    sharpe = np.mean(retdaily) / std 
     
+    
+    worksheet = sh.get_worksheet(0)
+    worksheet.update('B3',_ret)
+    worksheet.update('C3',_mdd)
+    worksheet.update('D3',riskretratio)
+    worksheet.update('E3',riskretratio)
+    worksheet.update('F3',winratio)
+    worksheet.update('G3',prtloseratio)
+    
+    worksheet.update('B5',yearreturn)
+    worksheet.update('C5',std)
+    worksheet.update('D5',sharpe)
+    worksheet.update('E5',monthreturn)
+    worksheet.update('F5',std)
+    worksheet.update('G5',longestHHTimes)    
     
     print('done')
 
