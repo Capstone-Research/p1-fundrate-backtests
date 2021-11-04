@@ -11,6 +11,9 @@ proj.directory-list = [{'dirloc': loc('.'),
                         'recursive': True,
                         'watch_for_changes': True}]
 proj.file-type = 'shared'
-proj.launch-config = {loc('binance-grid-backtest2.py'): ('project',
+proj.launch-config = {loc('binance-grid-backtest.py'): ('project',
+        (u'1',
+         '')),
+                      loc('binance-grid-backtest2.py'): ('project',
         (u'0',
          ''))}
