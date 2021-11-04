@@ -9,6 +9,8 @@ import time
 import csv
 import codecs
 import math
+import csv
+
 base_url = "https://api.binance.com/api/v3/"
 kline_req_url = base_url+"klines"
 itv='15m'
@@ -30,13 +32,10 @@ async def request(session,url):
 async def collectdata_calc():    
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
         now = datetime.now()
-        
-        startTime = 1502942400000 # 2017年8月17日星期四 12:00:00
-        endTime = int(time.mktime(now.timetuple())*1e3)
         ONE_DAY = 86400000
-        retdict = {}
-        
+        endTime = int(time.mktime(now.timetuple())*1e3)
         for ins in instruments:
+            startTime = 1502942400000 # 2017年8月17日星期四 12:00:00
             # collect kline 
             t = startTime
             all_klines = []
@@ -55,58 +54,85 @@ async def collectdata_calc():
             df = pd.DataFrame(all_klines)
             df.to_csv(ins+'_15m.csv')
         
-def backTestFromCsv():
-    for ins in instruments:
+def backTestFromCsv(ins):
+    ONE_DAY = 86400000
+    FIVE_DAYS = 86400000*5
+    
+    # #### 參數
+    # 根據黃的算式應該是使用不超過總資金的 20%
+    riskratio = 0.2
+    leverage = 2
+    
+    all_klines = []
+    with open(ins+'_15m.csv') as file_name:
+        file_read = csv.reader(file_name)
+        all_klines = list(file_read)
+    all_klines.pop(0)
+    compoundfund = initfund # 累計本金          
+    positiveFundTimes = 0 # 勝率 資費為正的次數 
+    totalTradeTimes = 0  # 總交易次數
+    
+    # mdd
+    hh = -9999
+    dd = 9999
+    mdd = 9999
+    
+    # 日內最大回撤
+    prvdaynetprofit = -9999
+    dmdd = 9999
+    
+    # 最長未創高區間
+    lastHHTimestamp = 0
+    longestHHPeriod = -9999
+    
+    
+    # 波動率
+    avgfundrate = 0
+    prvcompfund = 0
+    avgvolatility = 0
+    
+    curposition = []
+    timestart = float(all_klines[0][0]) 
+    daystamp = float(all_klines[0][0])
+    
+    for kl in all_klines:
+        curtime = float(kl[0][0])
+        # 累積足夠數量的指標，需要放棄前5天
+        if(curtime - timestart < FIVE_DAYS):continue
         
-        
-        compoundfund = initfund # 累計本金          
-        positiveFundTimes = 0 # 勝率 資費為正的次數 
-        totalFundTimes = 0  # 資費總次數
-        
-        
-        # mdd
-        hh = -9999
-        dd = 9999
-        mdd = 9999
-        
-        # 日內最大回撤
-        prvdaynetprofit = -9999
-        dmdd = 9999
-        
-        # 最長未創高區間
-        lastHHTimestamp = 0
-        longestHHPeriod = -9999
-        
-        
-        # 波動率
-        avgfundrate = 0
-        prvcompfund = 0
-        avgvolatility = 0
-        
-        all_klines = []
-        
-        curposition = []
-        for kl in all_klines:
+        if(curtime - daystamp >= ONE_DAY):
+            print('one day has passed , current time = '+ str(t))
+            daystamp = curtime
+            curprice = float(kl[4])
             
-            curtime = float(kl[0][0])
-            
-            # 可以做兩單，拿累加的總資產來開倉
-            # 根據黃的算式應該是使用不超過總資金的 20%
-            entryprice = float(kl[0][1])
-            endprice = float(kl[0][4])
-            # 計算低位
-            # 計算高位
-            size = compoundfund /2/entryprice
-            pnlToday = (endprice - entryprice) * size
-            
-            compoundfund += pnlToday
-            # 計算 d_dd 日內波動
-            if((totalFundTimes%3)==0):
-                print('one day has passed , current time = '+ str(t))
+            # 確認是否餘額風控後足夠可開倉
+            avlbalance = 0
+            notiontotal = 0
+            for po in curposition:
+                notiontotal += (curprice - po['entryprice'])*po['size']
                 
-                d_dd = todaynetprofit-prvdaynetprofit
-                if(d_dd < dmdd):dmdd = d_dd # d_dd
-                prvdaynetprofit = todaynetprofit
+            # 拿累加的總資產來開倉
+            if((notiontotal/compoundfund)<riskratio):
+               
+                endprice = float(kl[0][4])
+                
+                # 計算低位
+                # 計算高位
+                size = compoundfund * riskratio * leverage / curprice
+                pp = {''}
+            
+                totalTradeTimes += 1
+                
+            pnlToday = (endprice - entryprice) * size
+            compoundfund += pnlToday
+            
+            
+            # 計算 d_dd 日內波動
+            d_dd = todaynetprofit-prvdaynetprofit
+            if(d_dd < dmdd):dmdd = d_dd # d_dd
+            prvdaynetprofit = todaynetprofit
+            
+            
             
             # 計算 mdd 創高區間
             if(compoundfund > hh):
@@ -126,14 +152,14 @@ def backTestFromCsv():
             avgfundrate += fundrate
             prvcompfund = compoundfund
                 
-            
+        
         
         
         
     # 計算績效
-    avgfundrate /= totalFundTimes
-    avgvolatility /= totalFundTimes
-    winrate = (positiveFundTimes / totalFundTimes)*100
+    avgfundrate /= totalTradeTimes
+    avgvolatility /= totalTradeTimes
+    winrate = (positiveFundTimes / totalTradeTimes)*100
     
     # sharp
     def variance(data, ddof=0):
@@ -151,7 +177,7 @@ def backTestFromCsv():
     retdict[ins]['fundend'] = fundend
     
     retdict[ins]['positiveFundTimes'] = positiveFundTimes
-    retdict[ins]['totalFundTimes'] = totalFundTimes # 盈利次數
+    retdict[ins]['totalTradeTimes'] = totalTradeTimes # 盈利次數
     
     
     retdict[ins]['compoundfund'] = compoundfund  # 總報酬
@@ -166,8 +192,8 @@ def backTestFromCsv():
     return retdict
     
 def backtest():
-    
-    fundhist = backTestFromCsv()
+    for ins in instruments:
+        fundhist = backTestFromCsv(ins)
     
     file_object = codecs.open('marting_report.txt', 'w', "utf-8")
     file_object.write('')
@@ -184,7 +210,7 @@ def backtest():
         yearret = onedayret * 365 * 100
         yearret_str = "{:.2f}".format(yearret)
         
-        positiveRatio = (fundhist[ins]['positiveFundTimes'] / fundhist[ins]['totalFundTimes'])*100
+        positiveRatio = (fundhist[ins]['positiveFundTimes'] / fundhist[ins]['totalTradeTimes'])*100
         positiveRatio_str = "{:.2f}".format(positiveRatio)
         
         netReturn = fundhist[ins]['compoundfund'] - initfund
@@ -196,8 +222,8 @@ def backtest():
         msg += ins + 'USDT \n'
         msg += u'回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
         msg += u'初始資金:'+ str(initfund) +'USD\n'
-        msg += u'費率為正次數:'+ str(fundhist[ins]['positiveFundTimes'])+'\n'
-        msg += u'總領費率次數:'+ str(fundhist[ins]['totalFundTimes'])+'\n'
+        msg += u'賺錢次數:'+ str(fundhist[ins]['positiveFundTimes'])+'\n'
+        msg += u'總交易次數:'+ str(fundhist[ins]['totalTradeTimes'])+'\n'
         msg += u'勝率:'+ positiveRatio_str +'%\n'
         msg += u'總利潤:'+ netReturn_str +'USD\n'
         msg += u'最大創高區間:'+ ("{:.2f}".format(fundhist[ins]['longestHHPeriod'])) +'天\n'
@@ -278,7 +304,7 @@ def backtest():
     timestart = 29207694050000
     timeend = -9999
     positiveFundTimes = 0
-    totalFundTimes = 0
+    totalTradeTimes = 0
     for ins in coinlist:
         ndays = (fundhist[ins]['fundend'] - fundhist[ins]['fundstart']) / 86400000
         starttime = fundhist[ins]['fundstart']/1000
@@ -294,8 +320,8 @@ def backtest():
         onedayret = (fundhist[ins]['compoundfund'] - initfund)/ndays/initfund
         yearret += onedayret * 365 * 100 * coinweight[ins]
         positiveFundTimes += fundhist[ins]['positiveFundTimes']
-        totalFundTimes += fundhist[ins]['totalFundTimes']        
-        positiveRatio += (fundhist[ins]['positiveFundTimes'] / fundhist[ins]['totalFundTimes']) * 100 * coinweight[ins]
+        totalTradeTimes += fundhist[ins]['totalTradeTimes']        
+        positiveRatio += (fundhist[ins]['positiveFundTimes'] / fundhist[ins]['totalTradeTimes']) * 100 * coinweight[ins]
         netReturn += (fundhist[ins]['compoundfund'] - initfund) * coinweight[ins]
         grossRate += ((netReturn / initfund)/ndays*365*100) * coinweight[ins]
         sharpe += fundhist[ins]['sharpe'] * coinweight[ins]
@@ -309,7 +335,7 @@ def backtest():
     msg += u'回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
     msg += u'初始資金:'+ str(initfund) +'USD\n'
     msg += u'費率為正次數:'+ str(positiveFundTimes)+'\n'
-    msg += u'總領費率次數:'+ str(totalFundTimes)+'\n'
+    msg += u'總領費率次數:'+ str(totalTradeTimes)+'\n'
     msg += u'勝率:'+  ("{:.2f}".format(positiveRatio)) +'%\n'
     msg += u'總利潤:'+ ("{:.2f}".format(netReturn)) +'USD\n'
     msg += u'最大拉回:'+ ("{:.2f}".format(mdd)) +'%\n'
