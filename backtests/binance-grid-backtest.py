@@ -10,6 +10,10 @@ import csv
 import codecs
 import math
 import csv
+import random
+import string
+
+
 
 base_url = "https://api.binance.com/api/v3/"
 kline_req_url = base_url+"klines"
@@ -62,12 +66,16 @@ def backTestFromCsv(ins):
     # 根據黃的算式應該是使用不超過總資金的 20%
     riskratio = 0.2
     leverage = 2
+    takeprofit_ratio = 0.035
+    
     
     all_klines = []
     with open(ins+'_15m.csv') as file_name:
         file_read = csv.reader(file_name)
         all_klines = list(file_read)
     all_klines.pop(0)
+    
+    
     compoundfund = initfund # 累計本金          
     positiveFundTimes = 0 # 勝率 資費為正的次數 
     totalTradeTimes = 0  # 總交易次數
@@ -87,77 +95,124 @@ def backTestFromCsv(ins):
     
     
     # 波動率
-    avgfundrate = 0
+    avgdailyrate = 0
     prvcompfund = 0
     avgvolatility = 0
     
-    curposition = []
-    timestart = float(all_klines[0][0]) 
-    daystamp = float(all_klines[0][0])
     
+    timestart = float(all_klines[0][1])
+    timeend = float(all_klines[-1][1])
+    daystamp = timestart
+    
+    # 總單號流水
+    curposition = []
+    history_orders = []
     for kl in all_klines:
-        curtime = float(kl[0][0])
+        curtime = float(kl[1])
         # 累積足夠數量的指標，需要放棄前5天
         if(curtime - timestart < FIVE_DAYS):continue
         
         if(curtime - daystamp >= ONE_DAY):
-            print('one day has passed , current time = '+ str(t))
-            daystamp = curtime
-            curprice = float(kl[4])
             
-            # 確認是否餘額風控後足夠可開倉
-            avlbalance = 0
+            daystamp = curtime
+            curprice = float(kl[5])
+            
+            
+            # 超過了一天沒有成交的單撤掉
+            for p in range(len(curposition)-1,-1,-1):
+                po = curposition[p]
+                if(po['filled']<0.001):
+                    history_orders.append(curposition.pop(len(curposition)-1))
+            
+            # 確認是否餘額風控後足夠可掛單
             notiontotal = 0
             for po in curposition:
-                notiontotal += (curprice - po['entryprice'])*po['size']
-                
-            # 拿累加的總資產來開倉
-            if((notiontotal/compoundfund)<riskratio):
-               
-                endprice = float(kl[0][4])
-                
-                # 計算低位
-                # 計算高位
-                size = compoundfund * riskratio * leverage / curprice
-                pp = {''}
+                notiontotal += curprice*po['size']
             
-                totalTradeTimes += 1
-                
-            pnlToday = (endprice - entryprice) * size
-            compoundfund += pnlToday
+            # 計算今日損益
+            daynetprofit = 0
+            for po in curposition:
+                if( (abs(po['filled'])>0.0001) ):
+                    daynetprofit = (curprice - po['entryprice']) * po['filled']
+                compoundfund += daynetprofit
             
             
             # 計算 d_dd 日內波動
+            if(prvcompfund<1):prvcompfund = compoundfund
+            todaynetprofit = compoundfund-prvcompfund
             d_dd = todaynetprofit-prvdaynetprofit
             if(d_dd < dmdd):dmdd = d_dd # d_dd
-            prvdaynetprofit = todaynetprofit
-            
+            prvdaynetprofit = todaynetprofit            
             
             
             # 計算 mdd 創高區間
             if(compoundfund > hh):
                 hh=compoundfund
-                if(lastHHTimestamp<1):lastHHTimestamp=ktime
-                period = (ktime - lastHHTimestamp)
+                if(lastHHTimestamp<1):lastHHTimestamp=curtime
+                period = (curtime - lastHHTimestamp)
                 if(period > longestHHPeriod):
                     longestHHPeriod = period
-                lastHHTimestamp = ktime
+                lastHHTimestamp = curtime
             elif(compoundfund < hh):
                 dd = compoundfund - hh
                 if(dd < mdd):mdd=dd
             
             # 波動累加 報酬率累加
-            if(prvcompfund<1):prvcompfund = compoundfund
-            avgvolatility += abs(compoundfund - prvcompfund) / prvcompfund
-            avgfundrate += fundrate
+            avgvolatility += abs(todaynetprofit) / prvcompfund
+            avgdailyrate += d_dd/prvcompfund
             prvcompfund = compoundfund
+            
+            
+            # 當前部位占總資產淨值低於風險值，可開
+            if((notiontotal/compoundfund)<riskratio):
+                for i in range(leverage):
+                    # 計算低位
+                    entryprice = curprice - curprice * 0.382 * (i+1)
+                    orderid = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+                    sz = compoundfund * riskratio * leverage / entryprice
+                    po = {'entryprice':entryprice,'exitprice':-1,'size':sz,'filled':0,'orderid':orderid,'time':curtime}
+                    # 掛單
+                    curposition.append(po)
+                    
+            
+            print('one day has passed , current time = '+ str(curtime) + ' asset value is ' + str(compoundfund) )
+            
+        # 碰到點位成交
+        for po in curposition:
+            curlow = float(kl[4])
+            if( (abs(po['filled'])<0.0001) ):
+                if(curlow <= po['entryprice']):
+                    po['filled'] = po['size']
+                    print('買進 '+str(ins)+' @'+str(entryprice) +'成交 '+str(po['size']) + '顆')
                 
         
-        
-        
-        
+        # 總部位賺錢超過營利目標，出場
+        avgEntryPrice = 0
+        entrySizeTotal = 0
+        runtime_profit = 0
+        curhigh = float(kl[3])
+        for po in curposition:
+            if(po['filled']>0.001):
+                entrySizeTotal += po['filled']
+                avgEntryPrice += po['entryprice'] * po['filled']
+                
+        if(avgEntryPrice>0):
+            # 進場均價
+            avgEntryPrice /= entrySizeTotal
+            # 現價-均價 超過停利點
+            if( (curhigh-avgEntryPrice)/avgEntryPrice > takeprofit_ratio ):
+                # 無法賣在最高點，用停利點當出場
+                runtime_profit = (avgEntryPrice * takeprofit_ratio) * po['filled']
+                for po in curposition:
+                    history_orders.append(po)
+                
+                print('出場 '+str(ins)+' @'+str((avgEntryPrice * takeprofit_ratio)) +' 利潤:'+ str(runtime_profit) )
+                compoundfund += runtime_profit
+                totalTradeTimes += 1
+                positiveFundTimes += 1
+    
     # 計算績效
-    avgfundrate /= totalTradeTimes
+    avgdailyrate /= totalTradeTimes
     avgvolatility /= totalTradeTimes
     winrate = (positiveFundTimes / totalTradeTimes)*100
     
@@ -170,23 +225,22 @@ def backTestFromCsv(ins):
         var = variance(data)
         std_dev = math.sqrt(var)
         return std_dev            
-    sharpe = avgfundrate / stdev(fundratecoll)
+    sharpe = avgdailyrate / stdev(fundratecoll)
     
     
-    retdict[ins]['fundstart'] = fundstart
-    retdict[ins]['fundend'] = fundend
+    retdict['timestart'] = timestart
+    retdict['timeend'] = timeend
     
-    retdict[ins]['positiveFundTimes'] = positiveFundTimes
-    retdict[ins]['totalTradeTimes'] = totalTradeTimes # 盈利次數
+    retdict['positiveFundTimes'] = positiveFundTimes
+    retdict['totalTradeTimes'] = totalTradeTimes # 盈利次數
     
-    
-    retdict[ins]['compoundfund'] = compoundfund  # 總報酬
-    retdict[ins]['winrate'] = winrate # 勝率
-    retdict[ins]['longestHHPeriod'] = longestHHPeriod/86400000 # 創高區間
-    retdict[ins]['mdd'] = (mdd/initfund)*100 # mdd
-    retdict[ins]['dmdd'] = (dmdd/initfund)*100 # dmdd
-    retdict[ins]['sharpe'] = sharpe # sharpe
-    retdict[ins]['avgvolatility'] = avgvolatility # avgvolatility
+    retdict['compoundfund'] = compoundfund  # 總報酬
+    retdict['winrate'] = winrate # 勝率
+    retdict['longestHHPeriod'] = longestHHPeriod/86400000 # 創高區間
+    retdict['mdd'] = (mdd/initfund)*100 # mdd
+    retdict['dmdd'] = (dmdd/initfund)*100 # dmdd
+    retdict['sharpe'] = sharpe # sharpe
+    retdict['avgvolatility'] = avgvolatility # avgvolatility
     
     
     return retdict
@@ -194,26 +248,26 @@ def backTestFromCsv(ins):
 def backtest():
     for ins in instruments:
         fundhist = backTestFromCsv(ins)
-    
-    file_object = codecs.open('marting_report.txt', 'w', "utf-8")
-    file_object.write('')
-    file_object.close()
-    
-    for ins in instruments:
-        starttime = fundhist[ins]['fundstart'] / 1000
-        endtime = fundhist[ins]['fundend'] / 1000
+        totalReportFilename = ins + 'marting_strategy_total_report.txt'
+        
+        file_object = codecs.open( totalReportFilename , 'w', "utf-8")
+        file_object.write('')
+        file_object.close()
+        
+        starttime = fundhist['timestart'] / 1000
+        endtime = fundhist['timeend'] / 1000
         starttime_dt = datetime.fromtimestamp(starttime)
         endtime_dt = datetime.fromtimestamp(endtime)
         
-        durationDays = (fundhist[ins]['fundend'] - fundhist[ins]['fundstart']) / 86400000
-        onedayret = (fundhist[ins]['compoundfund'] - initfund)/durationDays/initfund
+        durationDays = (fundhist['timeend'] - fundhist['timestart']) / 86400000
+        onedayret = (fundhist['compoundfund'] - initfund)/durationDays/initfund
         yearret = onedayret * 365 * 100
         yearret_str = "{:.2f}".format(yearret)
         
-        positiveRatio = (fundhist[ins]['positiveFundTimes'] / fundhist[ins]['totalTradeTimes'])*100
+        positiveRatio = (fundhist['positiveFundTimes'] / fundhist['totalTradeTimes'])*100
         positiveRatio_str = "{:.2f}".format(positiveRatio)
         
-        netReturn = fundhist[ins]['compoundfund'] - initfund
+        netReturn = fundhist['compoundfund'] - initfund
         netReturn_str = "{:.2f}".format(netReturn)
         grossRate = (netReturn / initfund)/durationDays*365*100
         grossRate_str = "{:.2f}".format(grossRate)
@@ -222,165 +276,41 @@ def backtest():
         msg += ins + 'USDT \n'
         msg += u'回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
         msg += u'初始資金:'+ str(initfund) +'USD\n'
-        msg += u'賺錢次數:'+ str(fundhist[ins]['positiveFundTimes'])+'\n'
-        msg += u'總交易次數:'+ str(fundhist[ins]['totalTradeTimes'])+'\n'
+        msg += u'賺錢次數:'+ str(fundhist['positiveFundTimes'])+'\n'
+        msg += u'總交易次數:'+ str(fundhist['totalTradeTimes'])+'\n'
         msg += u'勝率:'+ positiveRatio_str +'%\n'
         msg += u'總利潤:'+ netReturn_str +'USD\n'
-        msg += u'最大創高區間:'+ ("{:.2f}".format(fundhist[ins]['longestHHPeriod'])) +'天\n'
-        msg += u'最大拉回:'+ ("{:.2f}".format(fundhist[ins]['mdd'])) +'%\n'
-        msg += u'每日最大拉回:'+ ("{:.2f}".format(fundhist[ins]['dmdd'])) +'%\n'
-        msg += u'夏普比率:'+ ("{:.2f}".format(fundhist[ins]['sharpe'])) +'\n'
-        msg += u'波動率:'+ ("{:.2f}".format(fundhist[ins]['avgvolatility'])) +'%\n'
+        msg += u'最大創高區間:'+ ("{:.2f}".format(fundhist['longestHHPeriod'])) +'天\n'
+        msg += u'最大拉回:'+ ("{:.2f}".format(fundhist['mdd'])) +'%\n'
+        msg += u'每日最大拉回:'+ ("{:.2f}".format(fundhist['dmdd'])) +'%\n'
+        msg += u'夏普比率:'+ ("{:.2f}".format(fundhist['sharpe'])) +'\n'
+        msg += u'波動率:'+ ("{:.2f}".format(fundhist['avgvolatility'])) +'%\n'
         msg += u'每月報酬:'+ ("{:.2f}".format(grossRate/12.0)) +'%\n'
         msg += u'年化報酬:'+ grossRate_str +'%\n\n'
         
         
-        file_object = codecs.open('fundrate_report.txt', 'a', "utf-8")
+        file_object = codecs.open(totalReportFilename, 'a', "utf-8")
         file_object.write(msg)
         file_object.close()        
         
         
         
-
-    # combine data
-    timestampcol = []
-    timeprice = {}
-    for key in fundhist[ins]:
-        if(type(key) != type(1)):continue
-        timestampcol.append(key)
-    for kline in arrobj:
-        time = kline[0]
-        if(not time in timeprice):
-            timeprice[time] = kline[4]
-        timestampcol.append(time)
-    
-    # 
-    timestampcol.sort()
-    
-    
-    with open( (ins+'_price.csv'), mode='w') as fprice_file:
-        fprice_file = csv.writer(fprice_file , lineterminator='\n',  delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        fprice_file.writerow(['time','fundrate','netprofit','price'])
-    
-        prvrate = 0
-        prvnetprofit = 0
-        prvprice = 0
-        for tt in timestampcol:
-            if(tt in fundhist[ins]):
-                prvrate = fundhist[ins][tt][0] * 3 * 365 * 100
-                prvnetprofit = fundhist[ins][tt][1]
-            elif(tt in timeprice):
-                prvprice = timeprice[tt]
-            _dt = datetime.fromtimestamp(tt/1000)
-            fprice_file.writerow([_dt,prvrate,prvnetprofit,prvprice])
-    
-    
-      
-      
-    
-    
-    
-    
-    
-    
-    # 綜合績效
-    # 目前人工挑選，長遠來看具備上漲基本面及
-    # 及歷史回測績效較好的幣種
-    coinlist = ['ETH','EGLD','DOGE','DOT','LTC']
-    coinweight = {'ETH':0.18,'EGLD':0.35,'DOGE':0.24,'DOT':0.1,'LTC':0.13}
-    
-    
-    yearret = 0
-    positiveRatio = 0
-    mdd = 9999
-    dmdd = 9999
-    sharpe = 0
-    avgvolatility = 0
-    netReturn = 0
-    grossRate = 0
-    durationDays = 0
-    starttime_dt = None
-    endtime_dt = None
-    timestart = 29207694050000
-    timeend = -9999
-    positiveFundTimes = 0
-    totalTradeTimes = 0
-    for ins in coinlist:
-        ndays = (fundhist[ins]['fundend'] - fundhist[ins]['fundstart']) / 86400000
-        starttime = fundhist[ins]['fundstart']/1000
-        endtime = fundhist[ins]['fundend']/1000
-        if(ndays>durationDays):durationDays=ndays
-        if(starttime < timestart):
-            starttime_dt = datetime.fromtimestamp(starttime)
-            timestart = starttime
-        if( endtime > timeend):
-            endtime_dt = datetime.fromtimestamp(endtime)
-            timeend = endtime
+        with open( (ins+'_price.csv'), mode='w') as fprice_file:
+            fprice_file = csv.writer(fprice_file , lineterminator='\n',  delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            fprice_file.writerow(['time','fundrate','netprofit','price'])
         
-        onedayret = (fundhist[ins]['compoundfund'] - initfund)/ndays/initfund
-        yearret += onedayret * 365 * 100 * coinweight[ins]
-        positiveFundTimes += fundhist[ins]['positiveFundTimes']
-        totalTradeTimes += fundhist[ins]['totalTradeTimes']        
-        positiveRatio += (fundhist[ins]['positiveFundTimes'] / fundhist[ins]['totalTradeTimes']) * 100 * coinweight[ins]
-        netReturn += (fundhist[ins]['compoundfund'] - initfund) * coinweight[ins]
-        grossRate += ((netReturn / initfund)/ndays*365*100) * coinweight[ins]
-        sharpe += fundhist[ins]['sharpe'] * coinweight[ins]
-        avgvolatility += fundhist[ins]['avgvolatility'] * coinweight[ins]
-        if(fundhist[ins]['mdd']<mdd ):mdd=fundhist[ins]['mdd']
-        if(fundhist[ins]['dmdd']<dmdd ):dmdd=fundhist[ins]['dmdd']
-    
-    
-    msg = u''
-    msg += "'ETH','EGLD','DOGE','DOT','LTC' 綜合費率套利績效\n"
-    msg += u'回測時間:'+str(starttime_dt)+' to '+str(endtime_dt)+ ' 共 ' +str(int(durationDays)) + ' 天 \n'
-    msg += u'初始資金:'+ str(initfund) +'USD\n'
-    msg += u'費率為正次數:'+ str(positiveFundTimes)+'\n'
-    msg += u'總領費率次數:'+ str(totalTradeTimes)+'\n'
-    msg += u'勝率:'+  ("{:.2f}".format(positiveRatio)) +'%\n'
-    msg += u'總利潤:'+ ("{:.2f}".format(netReturn)) +'USD\n'
-    msg += u'最大拉回:'+ ("{:.2f}".format(mdd)) +'%\n'
-    msg += u'每日最大拉回:'+ ("{:.2f}".format(dmdd)) +'%\n'
-    msg += u'夏普比率:'+ ("{:.2f}".format(sharpe)) +'\n'
-    msg += u'波動率:'+ ("{:.2f}".format(avgvolatility)) +'%\n'
-    msg += u'每月報酬:'+ ("{:.2f}".format(grossRate/12.0)) +'%\n'
-    msg += u'年化報酬:'+ ("{:.2f}".format(grossRate)) +'%\n\n'
-    
-    file_object = codecs.open('fundrate_backtest_combine.txt', 'w', "utf-8")
-    file_object.write(msg)
-    file_object.close()        
-    
-    timestampcol = []
-    for ins in coinlist:
-        for key in fundhist[ins]:
-            if(type(key) != type(1)):continue
-            timestampcol.append(key)
-    
-    timestampcol.sort() 
-    with open( ('combine_return.csv'), mode='w') as fprice_file:
-        fprice_file = csv.writer(fprice_file , lineterminator='\n', delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        fprice_file.writerow(['time','fundrate','netprofit'])
-
-        prvrate = {}
-        prvnetprofit = {}
-        for tt in timestampcol:
-            for ins in coinlist:
-                if(tt in fundhist[ins]):
-                    prvrate[ins] = (fundhist[ins][tt][0] * 3 * 365 * 100) * coinweight[ins]
-                    prvnetprofit[ins] = (fundhist[ins][tt][1]) * coinweight[ins]
-            
-            def _sum(arr):
-                sum=0
-                for i in arr:
-                    sum = sum + i
-                return(sum)               
-            rate = _sum( list(prvrate.values()) )
-            netprofit = _sum( list(prvnetprofit.values()) )
-            _dt = datetime.fromtimestamp(tt/1000)
-            dtformat = _dt.strftime('%Y-%m-%d %H:%M:%S')
-            fprice_file.writerow([dtformat,rate,netprofit])
-
-    
-    print('done')
+            prvrate = 0
+            prvnetprofit = 0
+            prvprice = 0
+            for tt in timestampcol:
+                if(tt in fundhist):
+                    prvrate = fundhist[tt][0] * 3 * 365 * 100
+                    prvnetprofit = fundhist[tt][1]
+                elif(tt in timeprice):
+                    prvprice = timeprice[tt]
+                _dt = datetime.fromtimestamp(tt/1000)
+                fprice_file.writerow([_dt,prvrate,prvnetprofit,prvprice])
+        
 
 if __name__ == "__main__":
     mode = sys.argv[1]
