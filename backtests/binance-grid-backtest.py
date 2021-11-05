@@ -57,16 +57,69 @@ async def collectdata_calc():
             
             df = pd.DataFrame(all_klines)
             df.to_csv(ins+'_15m.csv')
+
+
+def variance(data, ddof=0):
+    n = len(data)
+    mean = sum(data) / n
+    return sum((x - mean) ** 2 for x in data) / (n - ddof)
+def stdev(data):
+    var = variance(data)
+    std_dev = math.sqrt(var)
+    return std_dev
+
+# #### 參數
+# 根據黃的算式應該是使用不超過總資金的 20%
+# 布林長度
+boll_cnt = 20 
+boll_std = 2
+riskratio = 0.2
+leverage = 2
+takeprofit_ratio = 0.01
+
+# 布林帶標準算式
+def calc_entry_price_boll(klines,cnt,boll_std):
+    closearr = []
+    numbars = int(min(len(klines),cnt))
+    for k in range(numbars):
+        closearr.append(float(klines[k][5]))
+    mean = sum(closearr) / len(closearr)
+    std = stdev(closearr)
+    upper = mean + std * boll_std
+    lower = mean - std * boll_std
+    return upper,lower
+
+# 根據黃的算式布林帶上下加總
+def wen_strategy(klines,notiontotal,compoundfund):
+    bEnter = False
+    entryprice = float(klines[0][2])
+    sz = 0
+    #print('run wen_strategy , curtime = ' + klines[-1][1] + ' past start time='+ klines[0][1])
+    # 當前部位占總資產淨值低於風險值，可開
+    if((notiontotal/compoundfund)<riskratio):
+        curprice = klines[-1][5]
+        cnt_day = 24*60/15 * boll_cnt
+        cnt_6hr = 6*60/15 * boll_cnt
+        cnt_4hr = 4*60/15 * boll_cnt
+        cnt_1hr = 60/15 * boll_cnt
+        cnt_15m = 1 * boll_cnt
+        upper_day,lower_day = calc_entry_price_boll(klines,cnt_day,boll_std)
+        upper_6hr,lower_6hr = calc_entry_price_boll(klines,cnt_6hr,boll_std)
+        upper_4hr,lower_4hr = calc_entry_price_boll(klines,cnt_4hr,boll_std)
+        upper_1hr,lower_1hr = calc_entry_price_boll(klines,cnt_1hr,boll_std)
+        upper_15m,lower_15m = calc_entry_price_boll(klines,cnt_15m,boll_std)
         
+    # 依據價位位階調整開倉比例
+    sz = compoundfund * riskratio * leverage / entryprice
+    
+    
+    return bEnter,entryprice,sz
+    
+
+
 def backTestFromCsv(ins):
     ONE_DAY = 86400000
     FIVE_DAYS = 86400000*5
-    
-    # #### 參數
-    # 根據黃的算式應該是使用不超過總資金的 20%
-    riskratio = 0.2
-    leverage = 2
-    takeprofit_ratio = 0.035
     
     
     all_klines = []
@@ -107,9 +160,10 @@ def backTestFromCsv(ins):
     # 總單號流水
     curposition = []
     history_orders = []
-    for kl in all_klines:
+    for k in range(len(all_klines)-1):
+        kl = all_klines[k]
         curtime = float(kl[1])
-        # 累積足夠數量的指標，需要放棄前5天
+        # 累積足夠數量的指標，需要放棄前幾天
         if(curtime - timestart < FIVE_DAYS):continue
         
         if(curtime - daystamp >= ONE_DAY):
@@ -163,16 +217,15 @@ def backTestFromCsv(ins):
             prvcompfund = compoundfund
             
             
-            # 當前部位占總資產淨值低於風險值，可開
-            if((notiontotal/compoundfund)<riskratio):
-                for i in range(leverage):
-                    # 計算低位
-                    entryprice = curprice - curprice * 0.382 * (i+1)
-                    orderid = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
-                    sz = compoundfund * riskratio * leverage / entryprice
-                    po = {'entryprice':entryprice,'exitprice':-1,'size':sz,'filled':0,'orderid':orderid,'time':curtime}
-                    # 掛單
-                    curposition.append(po)
+            # 執行策略
+            numbar = min(1920,k)
+            bEnter,entryprice,sz = wen_strategy(all_klines[k-numbar:k+1],notiontotal,compoundfund)
+            if(bEnter):
+                orderid = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+                po = {'entryprice':entryprice,'exitprice':-1,'size':sz,'filled':0,'orderid':orderid,'time':curtime}
+                print(po)
+                # 掛單
+                curposition.append(po)
                     
             
             print('one day has passed , current time = '+ str(curtime) + ' asset value is ' + str(compoundfund) )
@@ -216,15 +269,7 @@ def backTestFromCsv(ins):
     avgvolatility /= totalTradeTimes
     winrate = (positiveFundTimes / totalTradeTimes)*100
     
-    # sharp
-    def variance(data, ddof=0):
-        n = len(data)
-        mean = sum(data) / n
-        return sum((x - mean) ** 2 for x in data) / (n - ddof)
-    def stdev(data):
-        var = variance(data)
-        std_dev = math.sqrt(var)
-        return std_dev            
+    # sharp    
     sharpe = avgdailyrate / stdev(fundratecoll)
     
     
