@@ -73,16 +73,21 @@ def stdev(data):
 # 布林長度
 boll_cnt = 20 
 boll_std = 2
-riskratio = 0.2
+riskratio = 0.03
 leverage = 2
+C24 = 1.01
+C25 = 1
+
 takeprofit_ratio = 0.01
 
 # 布林帶標準算式
-def calc_entry_price_boll(klines,cnt,boll_std):
+def calc_entry_price_boll(klines,cnt,boll_cnt,boll_std):
     closearr = []
-    numbars = int(min(len(klines),cnt))
-    for k in range(numbars):
-        closearr.append(float(klines[k][5]))
+    for k in range(len(klines)):
+        if(k%cnt == 0):
+            closearr.append(float(klines[k][5]))
+        if(len(closearr)>=boll_cnt):
+            break
     mean = sum(closearr) / len(closearr)
     std = stdev(closearr)
     upper = mean + std * boll_std
@@ -95,22 +100,73 @@ def wen_strategy(klines,notiontotal,compoundfund):
     entryprice = float(klines[0][2])
     sz = 0
     #print('run wen_strategy , curtime = ' + klines[-1][1] + ' past start time='+ klines[0][1])
+    
+    curprice = float(klines[-1][5])
+    C5 = curprice
+    cnt_day = int(24*60/15)
+    cnt_6hr = int(6*60/15)
+    cnt_4hr = int(4*60/15)
+    cnt_1hr = int(60/15)
+    cnt_15m = 1
+    upper_day,lower_day = calc_entry_price_boll(klines,cnt_day,boll_cnt,boll_std)
+    upper_4hr,lower_4hr = calc_entry_price_boll(klines,cnt_4hr,boll_cnt,boll_std)
+    upper_6hr,lower_6hr = calc_entry_price_boll(klines,cnt_6hr,boll_cnt,boll_std)
+    upper_1hr,lower_1hr = calc_entry_price_boll(klines,cnt_1hr,boll_cnt,boll_std)
+    upper_15m,lower_15m = calc_entry_price_boll(klines,cnt_15m,boll_cnt,boll_std)
+    
+    E5 = upper_day
+    E8 = upper_6hr
+    C30 = E5+E8
+    C32 = upper_4hr
+    C34 = upper_1hr
+    C36 = upper_15m
+    D31 = (C30+C32)/2
+    D33 = (C32+C34)/2
+    D35 = (C34+C36)/2
+    E32 = (D31+D33)/2
+    E34 = (D33+D35)/2
+    F33 = (E32+E34)/2
+    
+    
+    H5 = lower_day
+    H8 = lower_6hr
+    H17 = lower_15m
+    
+    C39 = H5+H8
+    C41 = lower_4hr
+    C43 = lower_1hr
+    C45 = lower_15m
+    D40 = (C39+C41)/2
+    D42 = (C41+C43)/2
+    D44 = (C43+C45)/2
+    E41 = (D40+D42)/2
+    E43 = (D42+D44)/2
+    F42 = (E41+E43)/2
+    
+    # 短頂
+    E23 = (F33+C5)/2*C24
+    # 短底
+    E27 = (F42+C5)/2*C24
+    # 中
+    E25 = (E23+E27)/2
+    # (中＋頂) / 2
+    E24 = (E23+E25)/2
+    # (中＋底) / 2
+    E26 = (E25+E27)/2
+    
+    if(curprice>E24):
+        riskratio = (E23/E24)-1
+    elif(curprice>E25):
+        riskratio = (E23/E25)-1
+    elif(curprice>E26):
+        riskratio = (E23/E26)-1
+    else:
+        riskratio = (E23/E27)-1
+        
     # 當前部位占總資產淨值低於風險值，可開
     if((notiontotal/compoundfund)<riskratio):
-        curprice = klines[-1][5]
-        cnt_day = 24*60/15 * boll_cnt
-        cnt_6hr = 6*60/15 * boll_cnt
-        cnt_4hr = 4*60/15 * boll_cnt
-        cnt_1hr = 60/15 * boll_cnt
-        cnt_15m = 1 * boll_cnt
-        upper_day,lower_day = calc_entry_price_boll(klines,cnt_day,boll_std)
-        upper_6hr,lower_6hr = calc_entry_price_boll(klines,cnt_6hr,boll_std)
-        upper_4hr,lower_4hr = calc_entry_price_boll(klines,cnt_4hr,boll_std)
-        upper_1hr,lower_1hr = calc_entry_price_boll(klines,cnt_1hr,boll_std)
-        upper_15m,lower_15m = calc_entry_price_boll(klines,cnt_15m,boll_std)
-        
-    # 依據價位位階調整開倉比例
-    sz = compoundfund * riskratio * leverage / entryprice
+        # 依據價位位階調整開倉比例
+        sz = compoundfund * riskratio * leverage / entryprice
     
     
     return bEnter,entryprice,sz
