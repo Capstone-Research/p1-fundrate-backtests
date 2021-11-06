@@ -23,6 +23,11 @@ itv='15m'
 
 instruments=['BTC',
     'ETH',
+    'BNB',
+    'SOL',
+    'FTT',
+    'DOT',
+    'ADA',
     'DOGE',
 ]
 
