@@ -19,8 +19,6 @@ base_url = "https://api.binance.com/api/v3/"
 kline_req_url = base_url+"klines"
 itv='15m'
 
-# 初始本金
-initfund = 100000
 
 
 instruments=['BTC',
@@ -74,7 +72,10 @@ def stdev(data):
 boll_cnt = 20 
 boll_std = 2
 riskratio = 0.03
+# 槓桿倍數
 leverage = 2
+# 初始本金
+initfund = 100000
 C24 = 1.01
 C25 = 1
 
@@ -154,22 +155,28 @@ def wen_strategy(klines,notiontotal,compoundfund):
     # (中＋底) / 2
     E26 = (E25+E27)/2
     
+    entryprice = curprice
     if(curprice>E24):
         riskratio = (E23/E24)-1
+        entryprice = E24
     elif(curprice>E25):
         riskratio = (E23/E25)-1
+        entryprice = E25
     elif(curprice>E26):
         riskratio = (E23/E26)-1
+        entryprice = E26
     else:
         riskratio = (E23/E27)-1
-        
+        entryprice = curprice
+    
+    profit_ratio = riskratio * C24 
     # 當前部位占總資產淨值低於風險值，可開
     if((notiontotal/compoundfund)<riskratio):
         # 依據價位位階調整開倉比例
         sz = compoundfund * riskratio * leverage / entryprice
+        bEnter = True
     
-    
-    return bEnter,entryprice,sz
+    return bEnter,entryprice,sz,profit_ratio
     
 
 
@@ -185,7 +192,8 @@ def backTestFromCsv(ins):
     all_klines.pop(0)
     
     
-    compoundfund = initfund # 累計本金          
+    compoundfund = initfund # 累計本金
+    margin = compoundfund
     positiveFundTimes = 0 # 勝率 資費為正的次數 
     totalTradeTimes = 0  # 總交易次數
     
@@ -212,10 +220,11 @@ def backTestFromCsv(ins):
     timestart = float(all_klines[0][1])
     timeend = float(all_klines[-1][1])
     daystamp = timestart
-    
+    dailyrate = []
     # 總單號流水
     curposition = []
     history_orders = []
+    trade_records = []
     for k in range(len(all_klines)-1):
         kl = all_klines[k]
         curtime = float(kl[1])
@@ -241,10 +250,14 @@ def backTestFromCsv(ins):
             
             # 計算今日損益
             daynetprofit = 0
-            for po in curposition:
-                if( (abs(po['filled'])>0.0001) ):
-                    daynetprofit = (curprice - po['entryprice']) * po['filled']
-                compoundfund += daynetprofit
+            positionNotion = 0
+            if(len(curposition)>0):
+                for po in curposition:
+                    if( (abs(po['filled'])>0.0001) ):
+                        daynetprofit += (curprice - po['entryprice']) * po['filled']
+                        positionNotion += curprice * po['filled']
+                compoundfund = margin + positionNotion
+            
             
             
             # 計算 d_dd 日內波動
@@ -269,22 +282,30 @@ def backTestFromCsv(ins):
             
             # 波動累加 報酬率累加
             avgvolatility += abs(todaynetprofit) / prvcompfund
-            avgdailyrate += d_dd/prvcompfund
+            profitrate = d_dd/prvcompfund
+            dailyrate.append(profitrate)
+            avgdailyrate += profitrate
             prvcompfund = compoundfund
             
             
             # 執行策略
             numbar = min(1920,k)
-            bEnter,entryprice,sz = wen_strategy(all_klines[k-numbar:k+1],notiontotal,compoundfund)
+            bEnter,entryprice,sz,profit_ratio = wen_strategy(all_klines[k-numbar:k+1],notiontotal,compoundfund)
             if(bEnter):
                 orderid = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
                 po = {'entryprice':entryprice,'exitprice':-1,'size':sz,'filled':0,'orderid':orderid,'time':curtime}
-                print(po)
+                #print(po)
+                takeprofit_ratio = profit_ratio
                 # 掛單
                 curposition.append(po)
-                    
-            
-            print('one day has passed , current time = '+ str(curtime) + ' asset value is ' + str(compoundfund) )
+                
+            # 紀錄
+            trade_record = {}
+            trade_record['time'] = curtime
+            trade_record['equity'] = compoundfund 
+            trade_record['price'] = curprice
+            trade_records.append(trade_record)
+            print('每日統計資產總值 , 當前時間 = '+ str(curtime) +' 當前價格 ='+str(curprice) +' 目前資產:' + str(compoundfund) )
             
         # 碰到點位成交
         for po in curposition:
@@ -292,7 +313,9 @@ def backTestFromCsv(ins):
             if( (abs(po['filled'])<0.0001) ):
                 if(curlow <= po['entryprice']):
                     po['filled'] = po['size']
-                    print('買進 '+str(ins)+' @'+str(entryprice) +'成交 '+str(po['size']) + '顆')
+                    # 剩餘現金 = 總資金 - 部位名義價值*顆數
+                    margin = compoundfund - entryprice * sz
+                    print(str(curtime) + ' 買進 '+str(ins)+' @'+str(entryprice) +'成交 '+str(po['size']) + '顆 , 剩餘現金' + str(margin))
                 
         
         # 總部位賺錢超過營利目標，出場
@@ -304,31 +327,35 @@ def backTestFromCsv(ins):
             if(po['filled']>0.001):
                 entrySizeTotal += po['filled']
                 avgEntryPrice += po['entryprice'] * po['filled']
-                
+        
         if(avgEntryPrice>0):
-            # 進場均價
             avgEntryPrice /= entrySizeTotal
             # 現價-均價 超過停利點
             if( (curhigh-avgEntryPrice)/avgEntryPrice > takeprofit_ratio ):
                 # 無法賣在最高點，用停利點當出場
                 runtime_profit = (avgEntryPrice * takeprofit_ratio) * po['filled']
+                positionNotion = 0
                 for po in curposition:
+                    exitprice = avgEntryPrice*(1+takeprofit_ratio)
+                    po['exitprice'] = exitprice 
+                    positionNotion += exitprice * po['filled']
                     history_orders.append(po)
-                
-                print('出場 '+str(ins)+' @'+str((avgEntryPrice * takeprofit_ratio)) +' 利潤:'+ str(runtime_profit) )
-                compoundfund += runtime_profit
+                    print( str(curtime) + ' 出場 '+str(ins)+' @'+str(po['exitprice']) +' 利潤:'+ str(runtime_profit)+' usd')
+                compoundfund = margin + positionNotion
+                print('目前資產:' + str(compoundfund))
+                curposition = []
                 totalTradeTimes += 1
                 positiveFundTimes += 1
     
     # 計算績效
-    avgdailyrate /= totalTradeTimes
-    avgvolatility /= totalTradeTimes
+    avgdailyrate /= len(dailyrate)
+    avgvolatility /= len(dailyrate)
     winrate = (positiveFundTimes / totalTradeTimes)*100
     
     # sharp    
-    sharpe = avgdailyrate / stdev(fundratecoll)
+    sharpe = avgdailyrate / stdev(dailyrate)
     
-    
+    retdict={}
     retdict['timestart'] = timestart
     retdict['timeend'] = timeend
     
@@ -344,12 +371,12 @@ def backTestFromCsv(ins):
     retdict['avgvolatility'] = avgvolatility # avgvolatility
     
     
-    return retdict
+    return retdict,trade_records
     
 def backtest():
     for ins in instruments:
-        fundhist = backTestFromCsv(ins)
-        totalReportFilename = ins + 'marting_strategy_total_report.txt'
+        fundhist,trade_records = backTestFromCsv(ins)
+        totalReportFilename = ins + '_rpt.txt'
         
         file_object = codecs.open( totalReportFilename , 'w', "utf-8")
         file_object.write('')
@@ -394,23 +421,17 @@ def backtest():
         file_object.write(msg)
         file_object.close()        
         
-        
-        
-        with open( (ins+'_price.csv'), mode='w') as fprice_file:
+
+        with open( (ins+'_records.csv'), mode='w') as fprice_file:
             fprice_file = csv.writer(fprice_file , lineterminator='\n',  delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            fprice_file.writerow(['time','fundrate','netprofit','price'])
+            fprice_file.writerow(['time','equity','price'])
         
             prvrate = 0
             prvnetprofit = 0
             prvprice = 0
-            for tt in timestampcol:
-                if(tt in fundhist):
-                    prvrate = fundhist[tt][0] * 3 * 365 * 100
-                    prvnetprofit = fundhist[tt][1]
-                elif(tt in timeprice):
-                    prvprice = timeprice[tt]
-                _dt = datetime.fromtimestamp(tt/1000)
-                fprice_file.writerow([_dt,prvrate,prvnetprofit,prvprice])
+            for rec in trade_records:
+                _dt = datetime.fromtimestamp( rec['time'] /1000)
+                fprice_file.writerow([_dt,rec['equity'],rec['price']])
         
 
 if __name__ == "__main__":
