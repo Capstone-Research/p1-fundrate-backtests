@@ -251,7 +251,7 @@ def backTestFromCsv(ins):
             # 確認是否餘額風控後足夠可掛單
             notiontotal = 0
             for po in curposition:
-                notiontotal += curprice*po['size']
+                notiontotal += curprice*po['filled']
             
             # 計算今日損益
             daynetprofit = 0
@@ -305,9 +305,13 @@ def backTestFromCsv(ins):
                 curposition.append(po)
                 
             # 紀錄
+            sztotal = 0
+            for po in curposition:
+                sztotal += po['filled']
             trade_record = {}
             trade_record['time'] = curtime
-            trade_record['equity'] = compoundfund 
+            trade_record['equity'] = compoundfund
+            trade_record['position'] = sztotal
             trade_record['price'] = curprice
             trade_records.append(trade_record)
             print('每日統計資產總值 , 當前時間 = '+ str(curtime) +' 當前價格 ='+str(curprice) +' 目前資產:' + str(compoundfund) )
@@ -429,14 +433,14 @@ def backtest():
 
         with open( (ins+'_records.csv'), mode='w') as fprice_file:
             fprice_file = csv.writer(fprice_file , lineterminator='\n',  delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            fprice_file.writerow(['time','equity','price'])
+            fprice_file.writerow(['time','equity','position','price'])
         
             prvrate = 0
             prvnetprofit = 0
             prvprice = 0
             for rec in trade_records:
                 _dt = datetime.fromtimestamp( rec['time'] /1000)
-                fprice_file.writerow([_dt,rec['equity'],rec['price']])
+                fprice_file.writerow([_dt,rec['equity'],rec['position'],rec['price']])
         
 
 if __name__ == "__main__":
